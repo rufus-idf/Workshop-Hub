@@ -1,0 +1,3606 @@
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+  let rawData = {};
+  let stockData = {};
+  let currentOrder = null;
+  let currentProduct = null;
+  let currentTab = 'active';
+  let pendingUpdates = {};
+  let saveTimer = null;
+  let assignQueue = {};
+  let currentWoodSubTab = 'instock'; 
+  let currentEdgeSubTab = 'instock';
+  let pendingCompUpdates = {};
+  let compSaveTimer = null;
+  let currentViewId = 'view-jobs';
+  let breadcrumbs = [];
+  let currentPanelName = "";
+  let currentStockTab = "wood";
+  let currentDelivTab = "bucket";
+  let currentCncTab = "load";
+  let currentCncWoodSubTab = 'sheets';
+  let cncWoodViewData = null; // holds the last filtered list shown in CNC
+  // --- Robust saving / offline handling ---
+  let saveInFlight = false;
+  let compSaveInFlight = false;
+  let cncSaveInFlight = false;
+  let healthTimer = null;
+  let inFlightUpdates = {};
+  let inFlightCompUpdates = {};
+  let inFlightCncCutUpdates = {};
+
+const makeOpId = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+function markUnsaved(message) {
+  const banner = document.getElementById("unsaved-banner");
+  const msg = document.getElementById("unsaved-msg");
+  if (!banner || !msg) return;
+
+  msg.textContent = message || "Changes are waiting to sync.";
+  banner.classList.remove("hidden");
+}
+
+function clearUnsavedIfEmptyQueues() {
+  const hasMain = Object.keys(pendingUpdates || {}).length > 0;
+  const hasComp = Object.keys(pendingCompUpdates || {}).length > 0;
+  const hasCnc  = Object.keys(pendingCncCutUpdates || {}).length > 0;
+
+  if (!hasMain && !hasComp && !hasCnc) {
+    const banner = document.getElementById("unsaved-banner");
+    if (banner) banner.classList.add("hidden");
+  }
+}
+
+function retrySaves() {
+  // Called by the banner button
+  sendQueueToServer();
+  sendCompQueueToServer();
+  sendCncCutQueueToServer();
+}
+
+function setHealthBadge(isOnline) {
+  const el = document.getElementById("health-badge");
+  if (!el) return;
+
+  if (isOnline) {
+    el.textContent = "Online";
+    el.classList.remove("bg-danger");
+    el.classList.add("bg-success");
+  } else {
+    el.textContent = "Offline";
+    el.classList.remove("bg-success");
+    el.classList.add("bg-danger");
+  }
+}
+
+// POLLING FOR NEW ORDERS
+function checkOrderBadge() {
+  google.script.run
+    .withSuccessHandler(hasPending => {
+      const badge = document.getElementById("order-badge");
+      if (badge) {
+         if (hasPending) badge.classList.remove("hidden");
+         else badge.classList.add("hidden");
+      }
+    })
+    .hasPendingOrders();
+}
+
+// Add this to your existing startHealthMonitor function
+// Find "function startHealthMonitor()" around line 13 and add the check inside:
+function startHealthMonitor() {
+  if (healthTimer) return;
+  
+  const pingOnce = () => {
+    google.script.run
+      .withSuccessHandler(() => setHealthBadge(true))
+      .withFailureHandler(() => setHealthBadge(false))
+      .ping();
+      
+    // NEW: Check for orders every ping (30s)
+    checkOrderBadge(); 
+  };
+
+  pingOnce();
+  healthTimer = setInterval(pingOnce, 30000);
+}
+
+
+// Normalise strings (kills weird spaces + trims)
+const norm = (v) => String(v ?? "").replace(/\u00A0/g, " ").trim();
+
+
+  // DEFINITIONS
+  const descriptions = {
+    cut: "Check panel size against cutting list.",
+    processed: "Drilling, Routing complete (mark even if not required).",
+    edgeFinish: "Edging applied/cleaned (or Sanded for Ply).",
+    packed: "Quality checked and wrapped."
+  };
+
+  document.getElementById('date-badge').innerText = new Date().toLocaleDateString('en-GB', {weekday:'short', day:'numeric'});
+  google.script.run
+  .withSuccessHandler(onDataLoad)
+  .withFailureHandler(err => { alert("getDataTree failed: " + err.message); console.log(err); })
+  .getDataTree();
+
+google.script.run
+  .withSuccessHandler(onStockLoad)
+  .withFailureHandler(err => { alert("getInventoryData failed: " + err.message); console.log(err); })
+  .getInventoryData();
+
+
+  function onStockLoad(data) {
+      stockData = data;
+      console.log("Stock Loaded", stockData);
+  }
+
+  function onDataLoad(data) {
+   rawData = data || {};
+   mergeWorkshopStockOrders();
+   console.log("Data Loaded", rawData);
+   renderJobs();
+
+  mountBreadcrumb("view-jobs");
+  updateBreadcrumbsForView("view-jobs");
+
+}
+
+
+  // ------------------------
+// ✅ SUMMARY HELPERS
+// ------------------------
+
+let deliveryStats = { order: { ready: 0, onSite: 0, avail: 0 }, products: {} };
+
+function computeDeliveryStatsForCurrentOrder() {
+  const orderObj = rawData[currentOrder];
+  if (!orderObj || !orderObj.products) {
+    deliveryStats = { order: { ready: 0, onSite: 0, avail: 0 }, products: {} };
+    return deliveryStats;
+  }
+
+  const stats = { order: { ready: 0, onSite: 0, avail: 0 }, products: {} };
+
+  for (const prodKey in orderObj.products) {
+  const prodName = norm(prodKey);
+  const prodData = orderObj.products[prodKey];
+
+  const del = getDeliveryTotals(orderObj, prodName);
+  const required = getRequiredUnits(prodData, del.total);
+
+  const ready = Math.min(getManufacturedUnits(prodData), required);
+  const onSite = Math.min(del.delivered, required);
+  const avail = Math.max(0, ready - onSite);
+
+  stats.products[prodName] = { required, ready, onSite, avail };
+
+  stats.order.ready += ready;
+  stats.order.onSite += onSite;
+  stats.order.avail += avail;
+}
+
+
+  deliveryStats = stats;
+  return stats;
+}
+
+function renderDeliverySummary() {
+  if (!currentOrder) return;
+  const stats = computeDeliveryStatsForCurrentOrder();
+  renderDeliveryProductSummary(stats); // ✅ only per-product table now
+}
+
+
+
+function getDeliveryTotals(orderObj, prodName) {
+  prodName = norm(prodName);
+  let total = 0;
+  let delivered = 0;
+  const del = (orderObj && orderObj.delivery) ? orderObj.delivery : { bucket: {}, rooms: {} };
+
+  if (del.bucket && del.bucket[prodName]) {
+    total += Number(del.bucket[prodName].qty) || 0;
+  }
+
+  if (del.rooms) {
+    for (const room in del.rooms) {
+      del.rooms[room].forEach(item => {
+        if (norm(item.name) === prodName) {
+          const q = Number(item.qty) || 0;
+          total += q;
+          if (item.status === "Delivered" || item.status === "Fitted") delivered += q;
+        }
+      });
+    }
+  }
+
+  return { total, delivered };
+}
+
+function renderDeliveryProductSummary(stats) {
+  const tbody = document.getElementById("deliv-prod-summary-body");
+  if (!tbody) return;
+
+  const products = stats && stats.products ? stats.products : {};
+  const keys = Object.keys(products);
+
+  if (!keys.length) {
+    tbody.innerHTML = `<tr><td colspan="5" class="text-center text-muted py-3">No delivery items.</td></tr>`;
+    return;
+  }
+
+  // Sort: most available first, then by name
+  keys.sort((a, b) => {
+    const A = products[a], B = products[b];
+    if ((B.avail || 0) !== (A.avail || 0)) return (B.avail || 0) - (A.avail || 0);
+    return String(a).localeCompare(String(b));
+  });
+
+  tbody.innerHTML = keys.map(name => {
+    const s = products[name] || { required:0, ready:0, onSite:0, avail:0 };
+    const availClass = (s.avail > 0) ? "text-success fw-bold" : "text-muted";
+
+    return `
+      <tr>
+        <td class="ps-3 fw-bold text-dark">${name}</td>
+        <td class="text-center">${s.required}</td>
+        <td class="text-center">${s.ready}</td>
+        <td class="text-center">${s.onSite}</td>
+        <td class="text-center ${availClass}">${s.avail}</td>
+      </tr>
+    `;
+  }).join("");
+}
+
+function getRequiredUnits(prodData, deliveryTotal) {
+  // Prefer delivery count if it exists (that is the furniture qty)
+  if (deliveryTotal > 0) return deliveryTotal;
+
+  // Fallback for Workshop Stock (no delivery rows)
+  if (prodData && prodData.panels && prodData.panels.length) {
+    const p = prodData.panels[0];
+    const per = Number(p.qtyPerUnit) || 1;
+    const qtyOrder = Number(p.qtyOrder) || 0;
+    return per ? Math.round(qtyOrder / per) : 0;
+  }
+
+  return 0;
+}
+
+function getManufacturedUnits(prodData) {
+  // Panels limiting factor
+  let panelUnits = Infinity;
+
+  if (prodData && prodData.panels && prodData.panels.length) {
+    prodData.panels.forEach(p => {
+      const per = Number(p.qtyPerUnit) || 1;
+      const packed = Number(p.qtyPacked) || 0;
+      const sets = Math.floor(packed / per);
+      if (sets < panelUnits) panelUnits = sets;
+    });
+  }
+
+  if (panelUnits === Infinity) panelUnits = 0;
+
+  // Components limiting factor (qty-based)
+let compUnits = Infinity;
+
+if (prodData && prodData.components && prodData.components.length) {
+  prodData.components.forEach(c => {
+    const per = Number(c.qtyPerUnit) || 1;
+    const packed = Number(c.qtyPacked) || 0;
+    const sets = Math.floor(packed / per);
+    if (sets < compUnits) compUnits = sets;
+  });
+}
+
+if (compUnits === Infinity) compUnits = 999999;
+
+return Math.min(panelUnits, compUnits);
+
+}
+
+function setBreadcrumbs(items) {
+  breadcrumbs = Array.isArray(items) ? items : [];
+  renderBreadcrumbs();
+}
+
+function renderBreadcrumbs() {
+  const el = document.getElementById("breadcrumb-bar");
+  if (!el) return;
+
+  el.innerHTML = "";
+  el.classList.toggle("active", breadcrumbs.length > 0);
+
+  breadcrumbs.forEach((c, i) => {
+    const isLast = (i === breadcrumbs.length - 1);
+
+    if (!c.onClick || isLast) {
+      const span = document.createElement("span");
+      span.textContent = c.label;
+      el.appendChild(span);
+    } else {
+      const a = document.createElement("a");
+      a.href = "#";
+      a.textContent = c.label;
+      a.onclick = (e) => {
+        e.preventDefault();
+        c.onClick();
+      };
+      el.appendChild(a);
+    }
+
+    if (!isLast) {
+      const sep = document.createElement("span");
+      sep.className = "breadcrumb-sep";
+      sep.textContent = "/";
+      el.appendChild(sep);
+    }
+  });
+}
+
+// Moves breadcrumb bar into the current screen header
+function mountBreadcrumb(viewId) {
+  const crumb = document.getElementById("breadcrumb-bar");
+  const view = document.getElementById(viewId);
+  if (!crumb || !view) return;
+
+  const header = view.querySelector(".sticky-top-bar") || view.querySelector(".app-header");
+  if (!header) return;
+
+  if (!header.contains(crumb)) header.appendChild(crumb);
+}
+
+// Builds breadcrumb path based on current view + currentOrder/currentProduct/etc.
+function updateBreadcrumbsForView(viewId) {
+  const ordersCrumb = {
+    label: "Orders",
+    onClick: () => {
+      currentOrder = null;
+      currentProduct = null;
+      currentPanelName = "";
+      showView("view-jobs");
+    }
+  };
+
+  // Jobs screen
+  if (viewId === "view-jobs") {
+    setBreadcrumbs([ordersCrumb]);
+    return;
+  }
+
+  // Project crumb (only if we have a current order)
+  const customer = (currentOrder && rawData[currentOrder]) ? norm(rawData[currentOrder].customer) : "Project";
+  const projectCrumb = {
+    label: currentOrder ? `${customer} (${currentOrder})` : "Project",
+    onClick: () => {
+      if (currentOrder) showView("view-dashboard");
+      else showView("view-jobs");
+    }
+  };
+
+  // Helpers (avoid crashes if currentProduct is empty)
+  const safeProd = norm(currentProduct || "");
+  const productCrumb = {
+    label: safeProd || "Product",
+    onClick: () => {
+      if (safeProd) showFork(safeProd);
+      else showView("view-manuf-list");
+    }
+  };
+
+  if (viewId === "view-dashboard") {
+    setBreadcrumbs([ordersCrumb, projectCrumb, { label: "Operations" }]);
+    return;
+  }
+
+  if (viewId === "view-manuf-list") {
+    setBreadcrumbs([ordersCrumb, projectCrumb, { label: "Manufacturing" }]);
+    return;
+  }
+
+  if (viewId === "view-fork") {
+    setBreadcrumbs([ordersCrumb, projectCrumb, { label: "Manufacturing", onClick: () => openManufacturing() }, { label: safeProd || "Product" }]);
+    return;
+  }
+
+  if (viewId === "view-panels") {
+    setBreadcrumbs([ordersCrumb, projectCrumb, { label: "Manufacturing", onClick: () => openManufacturing() }, productCrumb, { label: "Panels" }]);
+    return;
+  }
+
+  if (viewId === "view-single-panel") {
+    setBreadcrumbs([ordersCrumb, projectCrumb, { label: "Manufacturing", onClick: () => openManufacturing() }, productCrumb, { label: "Panels", onClick: () => openPanels() }, { label: currentPanelName || "Panel" }]);
+    return;
+  }
+
+  if (viewId === "view-comps") {
+    setBreadcrumbs([ordersCrumb, projectCrumb, { label: "Manufacturing", onClick: () => openManufacturing() }, productCrumb, { label: "Components" }]);
+    return;
+  }
+
+  if (viewId === "view-delivery") {
+    const tabLabel = (currentDelivTab === "rooms") ? "Rooms" : "Bucket";
+    setBreadcrumbs([
+      ordersCrumb,
+      projectCrumb,
+      { label: "Delivery" },
+      { label: tabLabel, onClick: () => switchDelivTab(currentDelivTab) }
+    ]);
+    return;
+  }
+
+  if (viewId === "view-stocklists") {
+    const tabLabel = currentStockTab ? currentStockTab.toUpperCase() : "Stock";
+    setBreadcrumbs([ordersCrumb, { label: "Stock Lists", onClick: () => openStockLists() }, { label: tabLabel }]);
+    return;
+  }
+
+  if (viewId === "view-cnc") {
+  setBreadcrumbs([ordersCrumb, projectCrumb, { label: "CNC" }]);
+  return;
+}
+
+
+  // fallback
+  setBreadcrumbs([ordersCrumb]);
+}
+
+  // --- NAVIGATION ---
+  function showView(viewId) {
+  currentViewId = viewId;
+
+  document.querySelectorAll('[id^="view-"]').forEach(v => v.classList.add('hidden'));
+  document.getElementById(viewId).classList.remove('hidden');
+
+  mountBreadcrumb(viewId);
+  updateBreadcrumbsForView(viewId);
+
+  window.scrollTo(0,0);
+}
+
+
+  function switchTab(tab) {
+    currentTab = tab;
+    document.getElementById('tab-active').classList.toggle('active', tab==='active');
+    document.getElementById('tab-stock').classList.toggle('active', tab==='stock');
+    document.getElementById('tab-history').classList.toggle('active', tab==='history');
+    renderJobs();
+  }
+
+  // --- 1. JOB LIST (Updated for Stock Split) ---
+  // --- 1. JOB LIST (Updated: Split Stock/Client, Clean History) ---
+  function renderJobs() {
+    document.getElementById('loading').classList.add('hidden');
+    const list = document.getElementById('job-list');
+    list.innerHTML = '';
+
+    // 1. Sort Orders (Newest First)
+    const sortedIds = Object.keys(rawData || {}).sort((a,b) => b.localeCompare(a));
+
+    let visibleCount = 0;
+
+    for (const id of sortedIds) {
+      const details = rawData[id];
+      const custName = String(details.customer || "").trim();
+      
+      // Identify type
+      const isWorkshop = (custName.toLowerCase() === 'workshop stock');
+
+      let orderRequired = 0;
+      let orderManufactured = 0;
+      let orderDelivered = 0;
+      let lines = '';
+
+      // 2. Calculate Totals
+      for (const prodName in details.products) {
+        const prodData = details.products[prodName];
+
+        const del = getDeliveryTotals(details, prodName);
+        const required = getRequiredUnits(prodData, del.total);
+        const manufactured = Math.min(getManufacturedUnits(prodData), required);
+        const delivered = Math.min(del.delivered, required);
+
+        orderRequired += required;
+        orderManufactured += manufactured;
+        orderDelivered += delivered;
+
+        // Custom text based on type
+        const lineText = isWorkshop 
+           ? `${required} ${prodName} — ${manufactured} ready`
+           : `${required} ${prodName} — ${manufactured} manufactured — ${delivered} delivered`;
+
+        lines += `<div class="small text-muted">${lineText}</div>`;
+      }
+
+      // 3. Check Completion
+      let isComplete = false;
+      if (orderRequired > 0) {
+          if (isWorkshop) isComplete = (orderManufactured >= orderRequired);
+          else isComplete = (orderDelivered >= orderRequired);
+      }
+
+      // --- 4. THE FILTERING LOGIC (Your Request) ---
+      
+      if (currentTab === 'active') {
+          // Client Jobs: Must be Client AND Not Complete
+          if (isWorkshop || isComplete) continue;
+      } 
+      else if (currentTab === 'stock') {
+          // Stock Builds: Must be Workshop AND Not Complete
+          // (If complete, it disappears from app entirely)
+          if (!isWorkshop || isComplete) continue;
+      } 
+      else if (currentTab === 'history') {
+          // History: Must be Client AND Complete
+          // (Workshop jobs never appear here)
+          if (isWorkshop || !isComplete) continue;
+      }
+
+      visibleCount++;
+
+      // 5. Render Card
+      const card = document.createElement('div');
+      card.className = 'card p-3';
+
+      if (currentTab === 'stock') {
+          // --- STOCK CARD STYLE (Purple, Direct to Manufacturing) ---
+          const manufPercent = orderRequired > 0 ? Math.round((orderManufactured / orderRequired) * 100) : 0;
+          
+          card.style.borderLeft = "5px solid #764ba2"; // Distinct purple marker
+          card.onclick = () => {
+              // Open Dashboard (with hidden delivery)
+              openStockDashboard(id); 
+          };
+
+          card.innerHTML = `
+            <div class="d-flex justify-content-between mb-2">
+              <div>
+                <h5 class="mb-0 fw-bold" style="color:#764ba2">Batch #${id}</h5>
+                <small class="text-muted">Workshop Stock</small>
+              </div>
+              <span class="badge bg-light text-dark border rounded-pill">
+                ${orderManufactured}/${orderRequired} Built
+              </span>
+            </div>
+            ${lines}
+            <div class="progress-track mt-2">
+              <div class="progress-fill" style="width:${manufPercent}%; background: #764ba2;"></div>
+            </div>
+          `;
+
+      } else {
+          // --- CLIENT CARD STYLE (Standard) ---
+          const delivPercent = orderRequired > 0 ? Math.round((orderDelivered / orderRequired) * 100) : 0;
+          const barColor = isComplete ? 'var(--status-fitted)' : 'var(--status-deliv)';
+
+          card.onclick = () => openOrder(id); // Goes to Dashboard
+
+          card.innerHTML = `
+            <div class="d-flex justify-content-between mb-2">
+              <div>
+                <h5 class="mb-0">${details.customer}</h5>
+                <small class="text-muted">#${id}</small>
+              </div>
+              <span class="badge bg-light text-dark rounded-pill">
+                ${orderDelivered}/${orderRequired} Delivered
+              </span>
+            </div>
+            ${lines}
+            <div class="progress-track mt-2">
+              <div class="progress-fill" style="width:${delivPercent}%; background:${barColor};"></div>
+            </div>
+            <div class="small text-muted mt-2">
+              ${orderManufactured}/${orderRequired} Manufactured
+            </div>
+          `;
+      }
+      
+      list.appendChild(card);
+    }
+
+    if (visibleCount === 0) {
+        list.innerHTML = `<div class="text-center text-muted py-5">No orders found in this tab.</div>`;
+    }
+  }
+
+  function openStockLists() {
+  showView('view-stocklists');
+  switchStockTab('wood');
+}
+
+function switchStockTab(tab) {
+
+  currentStockTab = tab;
+updateBreadcrumbsForView("view-stocklists");
+
+  document.getElementById('tab-stock-wood').classList.toggle('active', tab === 'wood');
+  document.getElementById('tab-stock-comp').classList.toggle('active', tab === 'comp');
+  document.getElementById('tab-stock-edge').classList.toggle('active', tab === 'edge');
+  document.getElementById('tab-stock-furn').classList.toggle('active', tab === 'furn');
+
+  document.getElementById('stock-pane-wood').classList.toggle('hidden', tab !== 'wood');
+  document.getElementById('stock-pane-comp').classList.toggle('hidden', tab !== 'comp');
+  document.getElementById('stock-pane-edge').classList.toggle('hidden', tab !== 'edge');
+  document.getElementById('stock-pane-furn').classList.toggle('hidden', tab !== 'furn');
+
+  if (tab === 'wood') openWoodStock();
+  if (tab === 'comp') openComponentStock();
+  if (tab === 'edge') openEdgeStock();
+  if (tab === 'furn') openFurnitureStock();
+}
+
+function switchWoodSubTab(tab) {
+  currentWoodSubTab = tab;
+
+  // tab button active state
+  document.getElementById('tab-wood-instock').classList.toggle('active', tab === 'instock');
+  document.getElementById('tab-wood-onorder').classList.toggle('active', tab === 'onorder');
+  document.getElementById('tab-wood-offcuts').classList.toggle('active', tab === 'offcuts');
+
+  // show/hide containers
+  document.getElementById('stock-wood-instock-list').classList.toggle('hidden', tab !== 'instock');
+  document.getElementById('stock-wood-onorder-list').classList.toggle('hidden', tab !== 'onorder');
+  document.getElementById('stock-wood-offcuts-list').classList.toggle('hidden', tab !== 'offcuts');
+
+  renderWoodStockManager(); // re-render tables
+}
+
+function switchEdgeSubTab(tab) {
+  currentEdgeSubTab = tab;
+
+  document.getElementById('tab-edge-instock').classList.toggle('active', tab === 'instock');
+  document.getElementById('tab-edge-onorder').classList.toggle('active', tab === 'onorder');
+
+  document.getElementById('stock-edge-instock-list').classList.toggle('hidden', tab !== 'instock');
+  document.getElementById('stock-edge-onorder-list').classList.toggle('hidden', tab !== 'onorder');
+
+  renderEdgeStockManager();
+}
+
+function renderEdgeStockManager() {
+  const data = stockData.edge || [];
+
+  const instockEl = document.getElementById('stock-edge-instock-list');
+  const onorderEl = document.getElementById('stock-edge-onorder-list');
+  if (!instockEl || !onorderEl) return;
+
+  const fullRolls = data.filter(i => (Number(i.rolls) || 0) > 0);
+  const onOrder   = data.filter(i => (Number(i.onOrder) || 0) > 0);
+
+  const buildTable = (rows, mode) => {
+    if (!rows.length) return `<div class="text-center text-muted py-4">No items found.</div>`;
+
+    let html = `
+      <div class="table-responsive bg-white rounded shadow-sm border">
+        <table class="table table-hover align-middle mb-0 text-start">
+          <thead class="bg-light">
+            <tr class="text-secondary small text-uppercase">
+              <th class="ps-3">Material</th>
+              <th>Thickness</th>
+              <th class="text-center">${mode === 'onorder' ? 'On Order' : 'In Stock'}</th>
+              <th class="text-end pe-3">Action</th>
+            </tr>
+          </thead>
+          <tbody>`;
+
+    rows.forEach(item => {
+      const qtyVal = mode === 'onorder' ? (Number(item.onOrder) || 0) : (Number(item.rolls) || 0);
+
+      html += `
+        <tr class="edge-row">
+          <td class="ps-3 fw-bold text-dark">${item.material}</td>
+          <td class="text-muted">${item.thickness}mm</td>
+
+          <td class="text-center fw-bold fs-5">${qtyVal}</td>
+
+          <td class="text-end pe-3">
+            <div class="d-flex justify-content-end gap-2">
+              <button class="btn btn-outline-dark btn-sm px-2"
+                      onclick="openAdjustModal('edge', ${item.rowIndex}, '${mode === 'onorder' ? 'onorder' : 'stock'}')"
+                      title="Adjust">
+                <strong>±</strong>
+              </button>
+
+              <button class="btn btn-outline-secondary btn-sm px-2"
+                      onclick="openStockHistory('edge', ${item.rowIndex})"
+                      title="History">
+                📖
+              </button>
+
+              ${mode === 'onorder'
+                ? `<button class="btn btn-outline-success btn-sm px-2"
+                           onclick="openReceiveModal('edge', ${item.rowIndex})"
+                           title="Receive from On Order">📦</button>`
+                : ``}
+            </div>
+          </td>
+        </tr>`;
+    });
+
+    html += `</tbody></table></div>`;
+    return html;
+  };
+
+  instockEl.innerHTML = buildTable(fullRolls, 'stock');
+  onorderEl.innerHTML = buildTable(onOrder, 'onorder');
+}
+
+
+
+function renderWoodStockManager() {
+  const data = stockData.wood || [];
+
+  const instockEl = document.getElementById('stock-wood-instock-list');
+  const onorderEl = document.getElementById('stock-wood-onorder-list');
+  const offcutsEl = document.getElementById('stock-wood-offcuts-list');
+
+  if (!instockEl || !onorderEl || !offcutsEl) return;
+
+  const isOffcut = (item) => String(item.type || '').toLowerCase().includes('offcut');
+  const isSheet = (item) => !isOffcut(item);
+
+  // Filters
+  const fullSheetsInStock = data.filter(i => isSheet(i) && (Number(i.qty) || 0) > 0);
+  const sheetsOnOrder     = data.filter(i => isSheet(i) && (Number(i.onOrder) || 0) > 0);
+  const offcutsInStock    = data.filter(i => isOffcut(i) && (Number(i.qty) || 0) > 0);
+
+  const buildTable = (rows, qtyMode) => {
+    if (!rows.length) return `<div class="text-center text-muted py-4">No items found.</div>`;
+
+    let html = `
+      <div class="table-responsive bg-white rounded shadow-sm border">
+        <table class="table table-hover align-middle mb-0 text-start">
+          <thead class="bg-light">
+            <tr class="text-secondary small text-uppercase">
+              <th class="ps-3">Type</th>
+              <th>Material</th>
+              <th>Size</th>
+              <th class="text-center">Qty</th>
+              <th class="text-end pe-3">Action</th>
+            </tr>
+          </thead>
+          <tbody>`;
+
+    rows.forEach(item => {
+      const offcut = isOffcut(item);
+
+      const typeBadge = offcut
+        ? '<span class="badge bg-warning text-dark border border-warning-subtle" style="font-size:0.7rem;">OFFCUT</span>'
+        : '<span class="badge bg-secondary border border-secondary-subtle" style="font-size:0.7rem;">SHEET</span>';
+
+      const qtyVal = qtyMode === 'onorder'
+        ? (Number(item.onOrder) || 0)
+        : (Number(item.qty) || 0);
+
+      // Only On Order tab has a button (receive)
+      const actionBtn = `
+  <div class="d-flex justify-content-end gap-2">
+    <button class="btn btn-outline-dark btn-sm px-2"
+            onclick="openAdjustModal('wood', ${item.rowIndex}, '${qtyMode === 'onorder' ? 'onorder' : 'stock'}')"
+            title="Adjust">
+      <strong>±</strong>
+    </button>
+
+    <button class="btn btn-outline-secondary btn-sm px-2"
+            onclick="openStockHistory('wood', ${item.rowIndex})"
+            title="History">
+      📖
+    </button>
+
+    ${qtyMode === 'onorder'
+      ? `<button class="btn btn-outline-success btn-sm px-2"
+                 onclick="openReceiveModal('wood', ${item.rowIndex})"
+                 title="Receive from On Order">📦</button>`
+      : ``}
+  </div>`;
+
+
+      html += `
+        <tr class="wood-row">
+          <td class="ps-3">${typeBadge}</td>
+
+          <!-- Tap material to view history (no button) -->
+          <td class="fw-bold text-dark" style="cursor:pointer;"
+              onclick="openStockHistory('wood', ${item.rowIndex})">
+            ${item.material || 'Unknown'}
+          </td>
+
+          <td style="font-family:monospace;">${item.size}</td>
+
+          <!-- Tap qty to adjust (stock or onorder depending on tab) -->
+          <td class="text-center fw-bold fs-5" style="cursor:pointer;"
+              onclick="openAdjustModal('wood', ${item.rowIndex}${qtyMode === 'onorder' ? ", 'onorder'" : ""})">
+            ${qtyVal}
+          </td>
+
+          <td class="text-end pe-3">${actionBtn}</td>
+        </tr>`;
+    });
+
+    html += `</tbody></table></div>`;
+    return html;
+  };
+
+  // Render each container
+  instockEl.innerHTML = buildTable(fullSheetsInStock, 'stock');
+  onorderEl.innerHTML = buildTable(sheetsOnOrder, 'onorder');
+  offcutsEl.innerHTML = buildTable(offcutsInStock, 'stock');
+}
+
+
+  function openOrder(id) {
+    currentOrder = id;
+    document.getElementById('dash-customer').innerText = rawData[id].customer;
+    
+    // SHOW Delivery button for Clients
+    const delivBtn = document.getElementById('btn-dash-deliv');
+    if(delivBtn) delivBtn.classList.remove('hidden');
+
+    showView('view-dashboard');
+  }
+
+  function openStockDashboard(id) {
+    currentOrder = id;
+    document.getElementById('dash-customer').innerText = rawData[id].customer;
+
+    // HIDE Delivery button for Stock
+    const delivBtn = document.getElementById('btn-dash-deliv');
+    if(delivBtn) delivBtn.classList.add('hidden');
+
+    showView('view-dashboard');
+  }
+
+  // --- 2. MANUFACTURING FLOW ---
+  function openManufacturing() {
+  document.getElementById('manuf-customer').innerText = rawData[currentOrder].customer;
+  const list = document.getElementById('product-list');
+  list.innerHTML = '';
+
+  const orderObj = rawData[currentOrder];
+
+  for (const prodName in orderObj.products) {
+    const prodData = orderObj.products[prodName];
+
+    const del = getDeliveryTotals(orderObj, prodName);
+    const required = getRequiredUnits(prodData, del.total);
+    const manufactured = Math.min(getManufacturedUnits(prodData), required);
+
+    const percent = required > 0 ? Math.round((manufactured / required) * 100) : 0;
+    const isComplete = (required > 0 && manufactured >= required);
+
+    const btn = document.createElement('div');
+    btn.className = 'card p-3 mb-2';
+    btn.onclick = () => showFork(prodName);
+
+    btn.innerHTML = `
+      <div class="d-flex justify-content-between align-items-center">
+        <div class="flex-grow-1" style="cursor:pointer">
+          <div class="fw-bold text-dark mb-1">${prodName}</div>
+          <div class="small text-muted">${required} Required — ${manufactured} Manufactured</div>
+          <div class="progress-track mt-2" style="height:4px;">
+            <div class="progress-fill" style="width:${percent}%; background: var(--color-pack-text);"></div>
+          </div>
+          ${isComplete ? `<div class="small text-success mt-1 fw-bold">Manufactured ✅</div>` : ``}
+        </div>
+
+        <div class="ms-3 ps-3 border-start d-flex gap-2">
+  ${!isComplete ? `
+    <button type="button"
+  class="btn btn-outline-dark btn-sm rounded-circle shadow-sm"
+  style="width:40px; height:40px;"
+  data-prod="${prodName.replace(/"/g,'&quot;')}"
+  onclick="openGateModal(event, this.dataset.prod)"
+  title="Why not manufactured?">
+  ℹ️
+</button>
+  ` : ``}
+
+  <button type="button"
+          class="btn btn-outline-secondary btn-sm rounded-circle shadow-sm"
+          style="width:40px; height:40px;"
+          onclick="triggerExport(event, '${currentOrder}', '${prodName}')">
+    📄
+  </button>
+</div>
+
+      </div>
+    `;
+
+    list.appendChild(btn);
+  }
+
+  showView('view-manuf-list');
+}
+
+
+  function showFork(prodName) {
+    currentProduct = prodName;
+    document.getElementById('fork-product-name').innerText = prodName;
+    showView('view-fork');
+  }
+
+  // --- 3. DELIVERY FLOW ---
+  function openDelivery() {
+  document.getElementById('deliv-customer').innerText = rawData[currentOrder].customer;
+  showView('view-delivery');
+  renderDeliverySummary();
+  switchDelivTab('bucket');
+}
+
+  function switchDelivTab(tab) {
+
+    currentDelivTab = tab;
+updateBreadcrumbsForView("view-delivery");
+
+    document.getElementById('tab-bucket').classList.toggle('active', tab==='bucket');
+    document.getElementById('tab-rooms').classList.toggle('active', tab==='rooms');
+    document.getElementById('deliv-bucket-view').classList.toggle('hidden', tab!=='bucket');
+    document.getElementById('deliv-rooms-view').classList.toggle('hidden', tab!=='rooms');
+    
+    renderDeliverySummary();
+
+if (tab === 'bucket') renderBucket();
+if (tab === 'rooms') renderRooms();
+
+  }
+
+  function renderBucket() {
+    computeDeliveryStatsForCurrentOrder();
+    const list = document.getElementById('bucket-list');
+    list.innerHTML = '';
+    const bucket = rawData[currentOrder].delivery.bucket || {};
+    
+    if(Object.keys(bucket).length === 0) {
+        list.innerHTML = '<div class="text-muted text-center py-3">Bucket Empty! All items assigned.</div>';
+        return;
+    }
+
+    for (const [prodName, data] of Object.entries(bucket)) {
+        if(data.qty > 0) {
+            const row = document.createElement('div');
+            row.className = 'd-flex justify-content-between align-items-center py-2 border-bottom';
+            const safeProd = norm(prodName);
+            const s = (deliveryStats.products && deliveryStats.products[safeProd]) ? deliveryStats.products[safeProd] : null;
+            const availTxt = s ? `Ready ${s.ready} • On site ${s.onSite} • Avail ${s.avail}` : "";
+
+row.innerHTML = `
+  <div>
+    <div class="fw-bold">${prodName}</div>
+    <div class="small text-muted">${availTxt}</div>
+  </div>
+  <span class="badge bg-secondary rounded-pill">${data.qty}</span>
+`;
+            list.appendChild(row);
+        }
+    }
+  }
+
+  function renderRooms() {
+  computeDeliveryStatsForCurrentOrder();
+
+  const list = document.getElementById('rooms-list');
+  list.innerHTML = '';
+  const rooms = rawData[currentOrder]?.delivery?.rooms || {};
+
+  if (Object.keys(rooms).length === 0) {
+    list.innerHTML = '<div class="text-muted text-center py-5">No rooms created yet.<br>Click + to assign items.</div>';
+    return;
+  }
+
+  // Small HTML escape helper (prevents room/product names breaking the HTML)
+  const esc = (s) => String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+  const accordion = document.createElement('div');
+  accordion.className = 'accordion';
+  accordion.id = 'rooms-accordion';
+
+  // Optional: sort rooms alphabetically
+  const entries = Object.entries(rooms).sort((a,b) => String(a[0]).localeCompare(String(b[0])));
+
+  entries.forEach(([roomNameRaw, items], idx) => {
+    const roomName = norm(roomNameRaw);
+
+    // Room totals for header summary
+    const totalQty = items.reduce((sum, it) => sum + (Number(it.qty) || 0), 0);
+    const onSiteQty = items.reduce((sum, it) => {
+      const st = norm(it.status);
+      const q = Number(it.qty) || 0;
+      return sum + ((st === "Delivered" || st === "Fitted") ? q : 0);
+    }, 0);
+
+    const roomId = `room-${idx}`; // safe unique id
+
+    const rowsHtml = items.map(item => {
+      const safeProd = norm(item.name);
+      const s = (deliveryStats.products && deliveryStats.products[safeProd]) ? deliveryStats.products[safeProd] : null;
+      const availTxt = s ? `Ready ${s.ready} • On site ${s.onSite} • Avail ${s.avail}` : "";
+
+      const colorClass = 'sel-' + item.status;
+      const opts = ['Pending', 'Delivered', 'Fitted'];
+
+      let optionsHTML = opts.map(opt =>
+        `<option value="${opt}" ${norm(item.status) === opt ? 'selected' : ''}>${opt}</option>`
+      ).join('');
+
+      optionsHTML += `<option value="Bucket" style="color:red; font-weight:bold;">↩ Return to Bucket</option>`;
+
+      return `
+        <tr class="room-row">
+          <td class="text-center fw-bold" style="width:70px;">x${Number(item.qty) || 0}</td>
+          <td>
+            <div class="fw-bold text-dark">${esc(item.name)}</div>
+            <div class="small text-muted">${esc(availTxt)}</div>
+          </td>
+          <td class="text-end" style="width:170px;">
+            <select class="form-select status-select ${colorClass}"
+                    onchange="changeStatus(this, '${esc(roomName)}', '${esc(item.name)}', '${esc(item.status)}')">
+              ${optionsHTML}
+            </select>
+          </td>
+        </tr>
+      `;
+    }).join("");
+
+    const itemHtml = `
+      <div class="accordion-item border-0 mb-2 room-acc">
+        <h2 class="accordion-header" id="heading-${roomId}">
+          <button class="accordion-button collapsed room-acc-btn"
+                  type="button"
+                  data-bs-toggle="collapse"
+                  data-bs-target="#collapse-${roomId}"
+                  aria-expanded="false"
+                  aria-controls="collapse-${roomId}">
+            <div class="d-flex w-100 justify-content-between align-items-center">
+              <div class="fw-bold text-dark">${esc(roomName)}</div>
+              <div class="small text-muted">On site ${onSiteQty}/${totalQty}</div>
+            </div>
+          </button>
+        </h2>
+
+        <div id="collapse-${roomId}" class="accordion-collapse collapse"
+             aria-labelledby="heading-${roomId}"
+             data-bs-parent="#rooms-accordion">
+          <div class="accordion-body pt-2">
+            <div class="table-responsive">
+              <table class="table table-sm mb-0 align-middle room-table">
+                <thead class="bg-light">
+                  <tr class="text-secondary small">
+                    <th class="text-center" style="width:70px;">Qty</th>
+                    <th>Item</th>
+                    <th class="text-end" style="width:170px;">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${rowsHtml}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    const wrap = document.createElement('div');
+    wrap.innerHTML = itemHtml;
+    accordion.appendChild(wrap.firstElementChild);
+  });
+
+  list.appendChild(accordion);
+}
+
+
+  function changeStatus(selectEl, roomName, prodName, oldStatus) {
+  const newStatus = selectEl.value;
+
+  roomName = norm(roomName);
+prodName = norm(prodName);
+oldStatus = norm(oldStatus);
+
+const roomArr = rawData[currentOrder].delivery.rooms[roomName] || [];
+const idx = roomArr.findIndex(i => norm(i.name) === prodName && norm(i.status) === oldStatus);
+
+
+  if (idx < 0) {
+    alert("Could not find this item group.");
+    selectEl.value = oldStatus;
+    return;
+  }
+
+  const groupQty = Number(roomArr[idx].qty) || 0;
+  if (groupQty <= 0) {
+    selectEl.value = oldStatus;
+    return;
+  }
+
+  // Ask how many to move if qty > 1
+let qtyToMove = groupQty;
+if (groupQty > 1) {
+  const entered = prompt(`How many "${prodName}" in ${roomName} to set to "${newStatus}"? (1-${groupQty})`, "1");
+  if (entered === null) { selectEl.value = oldStatus; return; }
+
+  const n = parseInt(entered, 10);
+  if (!n || n < 1 || n > groupQty) { alert("Invalid quantity."); selectEl.value = oldStatus; return; }
+
+  qtyToMove = n;
+}
+
+// ✅ NORMALISE AFTER qtyToMove is final
+roomName = norm(roomName);
+prodName = norm(prodName);
+oldStatus = norm(oldStatus);
+
+// ✅ Always recompute stats
+computeDeliveryStatsForCurrentOrder();
+const s = deliveryStats.products ? deliveryStats.products[prodName] : null;
+
+// Only consume "Available" when moving INTO Delivered/Fitted from a non-onsite state
+const oldCountsOnSite = (oldStatus === "Delivered" || oldStatus === "Fitted");
+const newCountsOnSite = (newStatus === "Delivered" || newStatus === "Fitted");
+
+if (s && newCountsOnSite && !oldCountsOnSite) {
+  if (qtyToMove > s.avail) {
+    alert(
+      `⛔ Not enough available to set ${qtyToMove} to "${newStatus}".\n\n` +
+      `Factory ready: ${s.ready}\nOn site: ${s.onSite}\nAvailable: ${s.avail}\n\n` +
+      `Wait for manufacturing or reduce quantity.`
+    );
+    selectEl.value = oldStatus;
+    return;
+  }
+}
+  // Return to Bucket (partial supported)
+  if (newStatus === "Bucket") {
+    showStatus("Returning...", false);
+
+    // Update local model
+    roomArr[idx].qty -= qtyToMove;
+    if (roomArr[idx].qty <= 0) roomArr.splice(idx, 1);
+    if (roomArr.length === 0) delete rawData[currentOrder].delivery.rooms[roomName];
+
+    const bucket = rawData[currentOrder].delivery.bucket;
+    if (!bucket[prodName]) bucket[prodName] = { qty: 0 };
+    bucket[prodName].qty += qtyToMove;
+
+    renderRooms();
+    renderDeliverySummary();
+    renderBucket();
+    showStatus("Returned!", true);
+
+    google.script.run.unassignFromRoom(currentOrder, roomName, prodName, qtyToMove);
+    return;
+  }
+
+
+  // Normal status change (partial supported)
+  showStatus("Checking Factory...", false);
+
+  google.script.run
+    .withSuccessHandler(res => {
+      if (res === "SUCCESS") {
+
+        // Remove qty from the old group
+        const curQty = Number(roomArr[idx].qty) || 0;
+        roomArr[idx].qty = curQty - qtyToMove;
+
+        // If old group is empty, remove it
+        if (roomArr[idx].qty <= 0) roomArr.splice(idx, 1);
+
+        // Add qty to the new status group (merge if exists)
+        const safeNewStatus = norm(newStatus);
+
+         let existing = roomArr.find(i => norm(i.name) === prodName && norm(i.status) === safeNewStatus);
+         if (existing) existing.qty += qtyToMove;
+         else roomArr.push({ name: prodName, qty: qtyToMove, status: safeNewStatus });
+        
+        if (roomArr.length === 0) delete rawData[currentOrder].delivery.rooms[roomName];
+
+        renderRooms();
+        renderDeliverySummary();
+        renderBucket();
+        showStatus("Saved", true);
+
+      } else if (res.startsWith("LIMIT_REACHED")) {
+        const parts = res.split(":");
+        const s = deliveryStats.products ? deliveryStats.products[norm(prodName)] : null;
+const extra = s
+  ? `\n\nFactory ready: ${s.ready}\nOn site: ${s.onSite}\nAvailable: ${s.avail}`
+  : "";
+
+alert(
+  `⛔ SAFETY STOP ⛔\n\nFactory has only packed ${parts[1]}.\nSite has already processed ${parts[2]}.\n\nWait for manufacturing.` +
+  extra
+);
+        selectEl.value = oldStatus;
+        showStatus("Blocked", true);
+      } else {
+        alert("Error: " + res);
+        selectEl.value = oldStatus;
+      }
+    })
+    .withFailureHandler(err => {
+      alert("Connection Error: " + err.message);
+      selectEl.value = oldStatus;
+    })
+    .updateDeliveryStatus(currentOrder, roomName, prodName, oldStatus, newStatus, qtyToMove);
+}
+
+
+  // --- 4. ASSIGN MODAL ---
+  function openAssignModal() {
+    const bucket = rawData[currentOrder].delivery.bucket || {};
+    const list = document.getElementById('assign-list');
+    list.innerHTML = '';
+    assignQueue = {}; 
+    document.getElementById('new-room-name').value = '';
+
+    if(Object.keys(bucket).length === 0) {
+        list.innerHTML = '<div class="text-center text-muted">Nothing in bucket to assign!</div>';
+    } else {
+        for (const [prodName, data] of Object.entries(bucket)) {
+            if(data.qty > 0) {
+                const row = document.createElement('div');
+                row.className = 'd-flex justify-content-between align-items-center mb-3';
+                row.innerHTML = `
+                    <div style="flex:1;"><strong>${prodName}</strong><br><small class="text-muted">Avail: ${data.qty}</small></div>
+                    <div class="d-flex align-items-center bg-light rounded px-2">
+                        <div class="btn-squircle text-dark" style="font-size:1.5rem;" onclick="updateAssign('${prodName}', -1, ${data.qty})">−</div>
+                        <input id="assign-${prodName}" class="qty-input bg-light mx-2" value="0" readonly>
+                        <div class="btn-squircle text-dark" style="font-size:1.5rem;" onclick="updateAssign('${prodName}', 1, ${data.qty})">+</div>
+                    </div>
+                `;
+                list.appendChild(row);
+            }
+        }
+    }
+    new bootstrap.Modal(document.getElementById('assignModal')).show();
+  }
+
+  function updateAssign(prodName, change, max) {
+    let current = assignQueue[prodName] || 0;
+    let next = current + change;
+    if(next < 0) next = 0;
+    if(next > max) next = max;
+    assignQueue[prodName] = next;
+    document.getElementById('assign-'+prodName).value = next;
+  }
+
+  function commitAssignment() {
+    const roomName = norm(document.getElementById('new-room-name').value);
+    if(!roomName) { alert("Please enter a Room Name"); return; }
+    
+    let moves = [];
+    for(const [prod, qty] of Object.entries(assignQueue)) {
+        if(qty > 0) moves.push({ prod: prod, qty: qty });
+    }
+    if(moves.length === 0) { alert("Select at least one item."); return; }
+
+    const modalEl = document.getElementById('assignModal');
+    const modal = bootstrap.Modal.getInstance(modalEl);
+    modal.hide();
+    showStatus("Assigning...", false);
+
+    moves.forEach(m => {
+        const safeProd = norm(m.prod);
+
+const bucket = rawData[currentOrder].delivery.bucket || {};
+if (!bucket[safeProd]) bucket[safeProd] = { qty: 0 };
+bucket[safeProd].qty -= m.qty;
+rawData[currentOrder].delivery.bucket = bucket;
+
+
+if (!rawData[currentOrder].delivery.rooms) rawData[currentOrder].delivery.rooms = {};
+if (!rawData[currentOrder].delivery.rooms[roomName]) rawData[currentOrder].delivery.rooms[roomName] = [];
+
+rawData[currentOrder].delivery.rooms[roomName].push({ name: safeProd, qty: m.qty, status: 'Pending' });
+
+google.script.run.assignToRoom(currentOrder, safeProd, m.qty, roomName);
+    });
+
+    setTimeout(() => {
+        showStatus("Assigned!", true);
+        renderBucket();
+        renderRooms();
+        renderDeliverySummary();
+    }, 500);
+  }
+
+  // --- 5. MANUFACTURING RENDERERS ---
+  
+  // NEW: FILTER LIST FUNCTION
+  function filterList(inputId, itemClass) {
+    const filter = document.getElementById(inputId).value.toUpperCase();
+    // Get all rows with the class
+    const rows = document.getElementsByClassName(itemClass);
+    
+    for (let i = 0; i < rows.length; i++) {
+      // For tables, we look at the whole row text
+      const txtValue = rows[i].textContent || rows[i].innerText;
+      if (txtValue.toUpperCase().indexOf(filter) > -1) {
+        rows[i].style.display = ""; // Show
+      } else {
+        rows[i].style.display = "none"; // Hide
+
+        // If we are filtering panels, hide any material groups that now have no visible cards
+      if (itemClass === 'panel-row-menu') {
+  document.querySelectorAll('.material-group').forEach(g => {
+    const cards = g.querySelectorAll('.panel-row-menu');
+    const anyVisible = Array.from(cards).some(c => c.style.display !== "none");
+    g.style.display = anyVisible ? "" : "none";
+  });
+}
+
+      }
+    }
+  }
+
+  // NEW: BATCH COMPLETE (FILL MAX)
+  function fillMax(rowIdx, type) {
+    if(!confirm("Mark ALL as complete for this stage?")) return;
+
+    let panelData = null;
+    const productObj = rawData[currentOrder].products[currentProduct];
+    if (productObj && productObj.panels) {
+        productObj.panels.forEach(p => { if(p.rowIndex == rowIdx) panelData = p; });
+    }
+    if (!panelData) return;
+
+    const input = document.getElementById(type + '-' + rowIdx);
+    if(!input) return;
+    
+    const currentVal = parseInt(input.value) || 0;
+    const maxVal = panelData.qtyOrder; 
+    const diff = maxVal - currentVal;
+    
+    if(diff > 0) {
+        update(rowIdx, type, diff);
+    } else {
+        alert("Already full!");
+    }
+  }
+
+  // --- REPLACED: openPanels (Now renders a Menu) ---
+  function openPanels() {
+  document.getElementById('panel-prod-name').innerText = currentProduct;
+  const list = document.getElementById('panel-list');
+  list.innerHTML = '';
+
+  const panels = (rawData[currentOrder]?.products?.[currentProduct]?.panels) || [];
+  if (!panels.length) {
+    list.innerHTML = `<div class="text-center text-muted py-4">No panels for this product.</div>`;
+    showView('view-panels');
+    return;
+  }
+
+  // Group by material
+  const groups = {};
+  panels.forEach(p => {
+    const mat = norm(p.material) || "Unspecified Material";
+    if (!groups[mat]) groups[mat] = [];
+    groups[mat].push(p);
+  });
+
+  // Sort material groups A→Z
+  const mats = Object.keys(groups).sort((a, b) => a.localeCompare(b));
+
+  mats.forEach(mat => {
+    // Group wrapper (important: class material-group used for search tidy)
+    const groupWrap = document.createElement('div');
+    groupWrap.className = "material-group mb-4";
+
+    // Group header
+    const header = document.createElement('div');
+    header.className = "px-2 mb-2";
+    header.innerHTML = `
+      <div class="fw-bold text-dark">${mat}</div>
+      <div class="small text-muted">${groups[mat].length} panel type(s)</div>
+    `;
+    groupWrap.appendChild(header);
+
+    // Sort panels inside each group by name
+    groups[mat].sort((a, b) => String(a.panelName).localeCompare(String(b.panelName)));
+
+    // Render each panel card (same style you already had)
+    groups[mat].forEach(p => {
+      const req = Number(p.qtyOrder) || 0;
+      const cut = Number(p.qtyCut) || 0;
+      const proc = Number(p.qtyProcessed) || 0;
+      const fin = Number(p.qtyEdgeFinish) || 0;
+      const pack = Number(p.qtyPacked) || 0;
+
+      const percent = req > 0 ? Math.round((pack / req) * 100) : 0;
+      const isDone = (req > 0 && pack >= req);
+
+      const row = document.createElement('div');
+      row.className = 'card p-3 mb-2 panel-row-menu shadow-sm border-0';
+      row.style.cursor = 'pointer';
+      row.onclick = () => openSinglePanel(p.rowIndex);
+
+      // NOTE: visually-hidden makes material searchable without cluttering the UI
+      row.innerHTML = `
+        <span class="visually-hidden">${mat}</span>
+        <div class="d-flex justify-content-between align-items-center">
+          <div>
+            <div class="fw-bold text-dark" style="font-size: 1.1rem;">${p.panelName}</div>
+            <div class="small text-muted">Qty Required: ${req}</div>
+            <div class="small text-muted mt-1">
+              ${cut} Cut — ${proc} Processed — ${fin} Finished — ${pack} Packed
+            </div>
+          </div>
+          <div class="d-flex align-items-center">
+            ${isDone ? '<span class="badge bg-success rounded-pill me-2">Packed ✅</span>' : ''}
+            <div class="text-muted" style="font-size: 1.5rem;">➔</div>
+          </div>
+        </div>
+        <div class="progress-track mt-2" style="height: 4px;">
+          <div class="progress-fill" style="width:${percent}%; background: var(--color-pack-text);"></div>
+        </div>
+      `;
+
+      groupWrap.appendChild(row);
+    });
+
+    list.appendChild(groupWrap);
+  });
+
+  showView('view-panels');
+}
+
+
+  // --- NEW: openSinglePanel (Renders the Controls) ---
+  function openSinglePanel(rowIdx) {
+     let panelData = null;
+     const productObj = rawData[currentOrder].products[currentProduct];
+     
+     // Find the panel data based on rowIndex
+     if (productObj && productObj.panels) {
+        productObj.panels.forEach(p => { if(p.rowIndex == rowIdx) panelData = p; });
+     }
+     
+     if(!panelData) { alert("Panel data not found"); return; }
+
+     currentPanelName = norm(panelData.panelName);
+
+     // Update Header
+     document.getElementById('single-panel-name').innerText = panelData.panelName;
+     document.getElementById('single-panel-sku').innerText = `Qty: ${panelData.qtyOrder}`;
+
+     // Render Controls into the new container
+     const container = document.getElementById('single-panel-controls');
+     container.innerHTML = `
+        <div class="mb-4">
+           ${renderControl('Cut', 'cut', panelData.qtyCut, panelData.rowIndex, 'btn-cut')}
+        </div>
+        <div class="mb-4">
+           ${renderControl('Process', 'processed', panelData.qtyProcessed, panelData.rowIndex, 'btn-proc')}
+        </div>
+        <div class="mb-4">
+           ${renderControl('Finish', 'edgeFinish', panelData.qtyEdgeFinish, panelData.rowIndex, 'btn-finish')}
+        </div>
+        <div class="mb-0">
+           ${renderControl('Pack', 'packed', panelData.qtyPacked, panelData.rowIndex, 'btn-pack')}
+        </div>
+     `;
+
+     showView('view-single-panel');
+  }
+
+  function openComponents() {
+  document.getElementById('comp-prod-name').innerText = currentProduct;
+  const list = document.getElementById('comp-list');
+  list.innerHTML = '';
+
+  const comps = rawData[currentOrder].products[currentProduct].components || [];
+  if (!comps.length) {
+    list.innerHTML = '<div class="p-4 text-center text-muted">No components.</div>';
+    showView('view-comps');
+    return;
+  }
+
+  comps.forEach(c => {
+    const req = Number(c.qtyRequired) || 0;
+    const packed = Number(c.qtyPacked) || 0;
+    const per = Number(c.qtyPerUnit) || 1;
+
+    const percent = req > 0 ? Math.round((packed / req) * 100) : 0;
+
+    const row = document.createElement('div');
+    row.className = 'card p-3 mb-2 border-0 shadow-sm';
+
+    row.innerHTML = `
+      <div class="d-flex justify-content-between align-items-center">
+        <div style="flex:1; padding-right:12px;">
+          <div class="fw-bold text-dark">${c.compName}</div>
+          <div class="small text-muted">${c.sku} • ${per} per unit • Required ${req}</div>
+        </div>
+
+        <div class="d-flex align-items-center">
+          <button type="button" class="btn-squircle btn-faded" onclick="compStep(event, ${c.rowIndex}, -1)">−</button>
+          <input type="number"
+                 id="comp-packed-${c.rowIndex}"
+                 class="qty-input"
+                 value="${packed}"
+                 style="width:60px;"
+                 onchange="compSetExact(event, ${c.rowIndex}, this.value)">
+          <button type="button" class="btn-squircle btn-pack" onclick="compStep(event, ${c.rowIndex}, 1)">+</button>
+        </div>
+      </div>
+
+      <div class="progress-track mt-2" style="height: 4px;">
+        <div class="progress-fill" style="width:${percent}%; background: var(--color-pack-text);"></div>
+      </div>
+
+      <div class="small text-muted mt-2">${packed} packed / ${req} required</div>
+    `;
+
+    list.appendChild(row);
+  });
+
+  showView('view-comps');
+}
+
+
+  function renderControl(label, type, val, rowIdx, colorClass) {
+    return `
+    <div class="qty-control-row">
+      <div class="d-flex align-items-center">
+        <span class="label-text me-2">${label}</span>
+        <small class="text-muted" style="cursor:pointer; font-size:1.1rem;" onclick="showInfo('${type}', '${label}')">ⓘ</small>
+      </div>
+      
+      <div class="d-flex align-items-center">
+        <div class="qty-wrapper me-2">
+          <button type="button" class="btn-squircle btn-faded" onclick="tapUpdate(event, ${rowIdx}, '${type}', -1)">−</button>
+          <input type="number" id="${type}-${rowIdx}" class="qty-input" value="${val}" readonly>
+          <button type="button" class="btn-squircle ${colorClass}" onclick="tapUpdate(event, ${rowIdx}, '${type}', 1)">+</button>
+        </div>
+        
+        <button class="btn btn-light btn-sm shadow-sm border rounded-circle" 
+                style="width:32px; height:32px; padding:0; line-height:1;" 
+                onclick="tapFillMax(event, ${rowIdx}, '${type}')" 
+                title="Complete All">
+           ↠
+        </button>
+      </div>
+    </div>`;
+  }
+
+  function showInfo(type, title) {
+    const text = descriptions[type] || "No description available.";
+    document.getElementById('modalTitle').innerText = title;
+    document.getElementById('modalBody').innerHTML = text;
+    new bootstrap.Modal(document.getElementById('infoModal')).show();
+  }
+
+  function tapUpdate(e, rowIdx, type, change) {
+  if (e) { e.preventDefault(); e.stopPropagation(); }
+  update(rowIdx, type, change);
+}
+
+function tapFillMax(e, rowIdx, type) {
+  if (e) { e.preventDefault(); e.stopPropagation(); }
+  fillMax(rowIdx, type);
+}
+
+
+  function update(rowIdx, type, change) {
+    const input = document.getElementById(type + '-' + rowIdx); 
+    if (!input) return;
+    
+    let currentVal = parseInt(input.value) || 0; // Safety: default to 0 if empty
+    let newVal = currentVal + change;
+    
+    let panelData = null;
+    const productObj = rawData[currentOrder].products[currentProduct];
+    if (productObj && productObj.panels) {
+        productObj.panels.forEach(p => { if(p.rowIndex == rowIdx) panelData = p; });
+    }
+    if (!panelData) return; 
+    
+    if (newVal < 0) return; 
+    if (type === 'cut' && newVal > panelData.qtyOrder) return; 
+
+    const getVal = (id) => { 
+        const el = document.getElementById(id + '-' + rowIdx); 
+        return el ? parseInt(el.value) : 0; 
+    };
+
+    // 1. FORWARD LOGIC
+    if (change > 0) {
+        if (type === 'processed' && newVal > getVal('cut')) { alert("⚠️ Restriction: You must CUT these panels first."); return; }
+        if (type === 'edgeFinish' && newVal > getVal('processed')) { alert("⚠️ Restriction: You must PROCESS these panels first."); return; }
+        if (type === 'packed' && newVal > getVal('edgeFinish')) { alert("⚠️ Restriction: You must EDGE these panels first."); return; }
+    }
+
+    // 2. BACKWARD LOGIC
+    if (change < 0) {
+        if (type === 'cut' && newVal < getVal('processed')) { alert("⛔ Blocked: Reduce 'Processed' count first."); return; }
+        if (type === 'processed' && newVal < getVal('edgeFinish')) { alert("⛔ Blocked: Reduce 'Edged' count first."); return; }
+        if (type === 'edgeFinish' && newVal < getVal('packed')) { alert("⛔ Blocked: Reduce 'Packed' count first."); return; }
+    }
+    
+    input.value = newVal;
+    if (type === 'cut') panelData.qtyCut = newVal;
+    if (type === 'processed') panelData.qtyProcessed = newVal;
+    if (type === 'edgeFinish') panelData.qtyEdgeFinish = newVal;
+    if (type === 'packed') panelData.qtyPacked = newVal;
+
+    showStatus("Saving...", false);
+
+const key = `${rowIdx}-${type}`;
+if (!pendingUpdates[key]) {
+  // base = value BEFORE any unsaved changes for this key
+  pendingUpdates[key] = {
+    rowIndex: rowIdx,
+    colName: type,
+    base: currentVal,
+    delta: 0,
+    opId: makeOpId(),
+    ts: Date.now()
+  };
+}
+pendingUpdates[key].delta = Number(pendingUpdates[key].delta || 0) + Number(change || 0);
+pendingUpdates[key].ts = Date.now();
+
+markUnsaved();
+
+if (saveTimer) clearTimeout(saveTimer);
+saveTimer = setTimeout(sendQueueToServer, 500);
+
+  }
+
+  function sendQueueToServer() {
+  if (saveInFlight) {
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(sendQueueToServer, 300);
+    return;
+  }
+
+  const sending = pendingUpdates || {};
+  const payload = Object.values(sending);
+
+  if (!payload.length) {
+    clearUnsavedIfEmptyQueues();
+    return;
+  }
+
+  // Move current queue to in-flight buffer so new clicks don’t get deleted/overwritten
+  inFlightUpdates = sending;
+  pendingUpdates = {};
+
+  saveInFlight = true;
+  showStatus("Saving.", false);
+
+  google.script.run
+    .withSuccessHandler((res) => {
+      saveInFlight = false;
+
+      if (!Array.isArray(res)) {
+        // Restore anything we were trying to send (unless newer edits already exist)
+        for (const k in inFlightUpdates) if (!pendingUpdates[k]) pendingUpdates[k] = inFlightUpdates[k];
+        inFlightUpdates = {};
+        markUnsaved("Not saved: unexpected server response.");
+        showStatus("Not saved", true);
+        return;
+      }
+
+      res.forEach(r => {
+        const key = `${r.rowIndex}-${r.colName}`;
+        delete inFlightUpdates[key];
+
+        // If user changed this again while we were saving, DON’T overwrite their newer value
+        if (pendingUpdates[key]) return;
+
+        const el = document.getElementById(`${r.colName}-${r.rowIndex}`);
+        if (el && r.value !== undefined) el.value = r.value;
+
+        // Update local model only if there’s no newer pending change
+        const prod = rawData?.[currentOrder]?.products?.[currentProduct];
+        const p = prod?.panels?.find(x => String(x.rowIndex) === String(r.rowIndex));
+        if (p && r.value !== undefined) {
+          if (r.colName === "cut") p.qtyCut = r.value;
+          if (r.colName === "processed") p.qtyProcessed = r.value;
+          if (r.colName === "edgeFinish") p.qtyEdgeFinish = r.value;
+          if (r.colName === "packed") p.qtyPacked = r.value;
+        }
+      });
+
+      // If new changes arrived while saving, flush again immediately
+      if (Object.keys(pendingUpdates).length > 0) {
+        if (saveTimer) clearTimeout(saveTimer);
+        saveTimer = setTimeout(sendQueueToServer, 0);
+        markUnsaved();
+        return;
+      }
+
+      clearUnsavedIfEmptyQueues();
+      showStatus("Saved", true);
+    })
+    .withFailureHandler((err) => {
+      saveInFlight = false;
+      setHealthBadge(false);
+
+      // Restore in-flight items that don’t have newer versions
+      for (const k in inFlightUpdates) if (!pendingUpdates[k]) pendingUpdates[k] = inFlightUpdates[k];
+      inFlightUpdates = {};
+
+      markUnsaved("Not saved (connection/server issue).");
+      showStatus("Not saved", true);
+      console.log("processBatch failed:", err);
+    })
+    .processBatch(payload);
+}
+
+
+
+
+  // --- NEW: TRIGGER XML EXPORT ---
+  function triggerExport(evt, orderId, prodName) {
+  if (evt) evt.stopPropagation();
+
+    if(!confirm(`Generate CNC XML file for ${prodName}?`)) return;
+    
+    showStatus("Generating XML...", false);
+    
+    google.script.run
+      .withSuccessHandler(res => {
+         alert(res); // "Saved to Drive: CNC_1006_Cabinet.xml"
+         showStatus("Done", true);
+      })
+      .withFailureHandler(err => {
+         alert("Error: " + err.message);
+         showStatus("Error", false);
+      })
+      .exportCncXml(orderId, prodName);
+  }
+  
+  function toggleComponent(rowIdx, rowEl) {
+    const isPacked = rowEl.classList.contains('packed');
+    const newState = !isPacked;
+    if (newState) rowEl.classList.add('packed'); else rowEl.classList.remove('packed');
+    rowEl.querySelector('.chk-circle').innerHTML = newState ? '✔' : '';
+    google.script.run.updateComponentStatus(rowIdx, newState);
+  }
+
+  function showStatus(msg, fadeOut) {
+    const el = document.getElementById('save-status'); el.innerText = msg; el.classList.add('visible');
+    if (fadeOut) setTimeout(() => el.classList.remove('visible'), 2000);
+  }
+
+  // --- INVENTORY LOGIC ---
+
+  function openComponentStock() {
+  const list = document.getElementById('stock-comp-list');
+  if (!list) return;
+
+  if (!stockData.components) { list.innerHTML = 'Loading...'; return; }
+
+  let html = `
+    <div class="table-responsive bg-white rounded shadow-sm border">
+      <table class="table table-hover align-middle mb-0 text-start">
+        <thead class="bg-light">
+          <tr class="text-secondary small text-uppercase">
+            <th class="ps-3">Item</th>
+            <th>SKU</th>
+            <th>Category</th>
+            <th class="text-center">Qty</th>
+            <th class="text-end pe-3">Action</th>
+          </tr>
+        </thead>
+        <tbody>`;
+
+  stockData.components.forEach(item => {
+    const key = `Component: ${item.sku} | ${item.name}`;
+
+    html += `
+      <tr class="stock-row">
+        <td class="ps-3 fw-bold text-dark">${item.name}</td>
+        <td class="text-muted" style="font-family:monospace;">${item.sku}</td>
+        <td class="text-muted">${item.category || ''}</td>
+        <td class="text-center fw-bold fs-5">${item.stock}</td>
+        <td class="text-end pe-3">
+          <div class="d-flex justify-content-end gap-2">
+            <button class="btn btn-outline-dark btn-sm px-2"
+                    onclick="openAdjustModal('comp', ${item.rowIndex})"
+                    title="Adjust Stock (Add/Remove)">
+              <strong>±</strong>
+            </button>
+            <button class="btn btn-outline-secondary btn-sm px-2"
+                    onclick="openStockHistory('comp', ${item.rowIndex})"
+                    title="View Change Log">
+              📖
+            </button>
+          </div>
+        </td>
+      </tr>`;
+  });
+
+  html += `</tbody></table></div>`;
+  list.innerHTML = html;
+}
+
+
+  // 1. OPEN THE VIEW (Simple Setup)
+  function openCNCView() {
+  showView('view-cnc');
+
+  const select = document.getElementById('cnc-job-filter');
+  if (select) {
+    select.innerHTML = '<option value="">-- Show All Stock --</option>';
+    Object.keys(rawData).reverse().forEach(id => {
+      const cust = rawData[id].customer;
+      const opt = document.createElement('option');
+      opt.value = id;
+      opt.text = `${cust} (#${id})`;
+      select.appendChild(opt);
+    });
+    if (currentOrder) select.value = currentOrder;
+  }
+
+  filterStockByJob();
+}
+
+
+  function renderWoodStock(customData = null, forceContext = null) {
+  // CNC containers (new)
+  const cncSheetsEl = document.getElementById('wood-stock-list-sheets');
+  const cncOffcutsEl = document.getElementById('wood-stock-list-offcuts');
+
+  // CNC container (old fallback)
+  const list = document.getElementById('wood-stock-list');
+
+  // Manager container (your old one; if it exists we still support it)
+  const manageList = document.getElementById('stock-wood-list');
+
+  // Prefer passed data, else CNC cached data, else full stock
+  const dataToRender = customData || cncWoodViewData || stockData.wood || [];
+
+  const isOffcut = (item) => String(item.type || '').toLowerCase().includes('offcut');
+
+  const generateTable = (context, rows) => {
+    if (!rows || rows.length === 0) return '<div class="text-center p-4 text-muted">No Data</div>';
+
+    let html = `
+      <div class="table-responsive bg-white rounded shadow-sm border">
+        <table class="table table-hover align-middle mb-0 text-start">
+          <thead class="bg-light">
+            <tr class="text-secondary small text-uppercase">
+              <th class="ps-3">Type</th>
+              <th>Material</th>
+              <th>Size</th>
+              <th class="text-center">Qty</th>
+              <th class="text-end pe-3">Action</th>
+            </tr>
+          </thead>
+          <tbody>`;
+
+    rows.forEach(item => {
+      const offcut = isOffcut(item);
+      const typeBadge = offcut
+        ? '<span class="badge bg-warning text-dark border border-warning-subtle" style="font-size:0.7rem;">OFFCUT</span>'
+        : '<span class="badge bg-secondary border border-secondary-subtle" style="font-size:0.7rem;">SHEET</span>';
+
+      let actionBtn = '';
+      if (context === 'cnc') {
+        actionBtn = `<button class="btn btn-dark btn-sm rounded-pill px-3 fw-bold" onclick="openAllocateModal(${item.rowIndex})">ALLOCATE</button>`;
+      } else {
+        actionBtn = `
+          <div class="d-flex justify-content-end gap-2">
+            <button class="btn btn-outline-dark btn-sm px-2" onclick="openAdjustModal('wood', ${item.rowIndex})" title="Adjust Stock / On Order">
+              <strong>±</strong>
+            </button>
+            <button class="btn btn-outline-secondary btn-sm px-2" onclick="openStockHistory('wood', ${item.rowIndex})" title="View Change Log">
+              📖
+            </button>
+            <button class="btn btn-outline-success btn-sm px-2" onclick="openReceiveModal('wood', ${item.rowIndex})" title="Receive from On Order">
+              📦
+            </button>
+          </div>`;
+      }
+
+      html += `
+        <tr class="wood-row">
+          <td class="ps-3">${typeBadge}</td>
+          <td class="fw-bold text-dark">${item.material || 'Unknown'}</td>
+          <td style="font-family:monospace;">${item.size}</td>
+          <td class="text-center fw-bold fs-5">${Number(item.qty) || 0}</td>
+          <td class="text-end pe-3">${actionBtn}</td>
+        </tr>`;
+    });
+
+    html += `</tbody></table></div>`;
+    return html;
+  };
+
+  // ✅ CNC (NEW): If the split containers exist, render sheets + offcuts separately
+  if ((forceContext === 'cnc' || !forceContext) && cncSheetsEl && cncOffcutsEl) {
+    const sheets = dataToRender.filter(x => !isOffcut(x) && (Number(x.qty) || 0) > 0);
+    const offcuts = dataToRender.filter(x => isOffcut(x) && (Number(x.qty) || 0) > 0);
+
+    cncSheetsEl.innerHTML = generateTable('cnc', sheets);
+    cncOffcutsEl.innerHTML = generateTable('cnc', offcuts);
+
+    // keep whichever tab is selected visible
+    switchCncWoodSubTab(currentCncWoodSubTab || 'sheets');
+  }
+  // ✅ CNC (OLD fallback): if you still have the old single list container somewhere
+  else if ((forceContext === 'cnc' || !forceContext) && list) {
+    list.innerHTML = generateTable('cnc', dataToRender);
+  }
+
+  // ✅ Manager view (unchanged behaviour)
+  if (manageList && !customData) {
+    manageList.innerHTML = generateTable('manage', dataToRender);
+  }
+}
+
+  
+  function switchCNCTab(tab) {
+
+    currentCncTab = tab;
+updateBreadcrumbsForView("view-cnc");
+
+      document.getElementById('tab-cnc-load').classList.toggle('active', tab==='load');
+      document.getElementById('tab-cnc-scan').classList.toggle('active', tab==='scan');
+      document.getElementById('cnc-load-view').classList.toggle('hidden', tab!=='load');
+      document.getElementById('cnc-scan-view').classList.toggle('hidden', tab!=='scan');
+  }
+
+  // --- ACTIONS ---
+
+  // --- ACTIONS (CORRECTED) ---
+
+  function adjustStock(type, rowIndex, change) {
+      showStatus("Updating...", false);
+      
+      // 1. Handle Components
+      if(type === 'comp') {
+          google.script.run.withSuccessHandler(res => {
+             showStatus("Saved", true);
+             google.script.run.withSuccessHandler(d => { stockData = d; openComponentStock(); }).getInventoryData();
+          }).adjustComponentStock(rowIndex, change, "Manual Adjustment");
+      }
+
+      // 2. Handle Wood (THIS WAS MISSING)
+      if(type === 'wood') {
+          google.script.run.withSuccessHandler(res => {
+             showStatus("Saved", true);
+             google.script.run.withSuccessHandler(d => { stockData = d; openWoodStock(); }).getInventoryData();
+          }).adjustWoodStock(rowIndex, change, "Manual Adjustment");
+      }
+
+      if(type === 'edge') {
+  google.script.run.withSuccessHandler(res => {
+     showStatus("Saved", true);
+     google.script.run.withSuccessHandler(d => { stockData = d; openEdgeStock(); }).getInventoryData();
+  }).adjustEdgeStock(rowIndex, change, "Manual Adjustment");
+}
+
+  }
+
+  function adjustStockManual(type, rowIndex) {
+      const val = prompt("Enter quantity to ADD (positive) or REMOVE (negative):");
+      const num = parseInt(val);
+      
+      if (isNaN(num) || num === 0) return; // Cancelled or invalid
+      
+      const reason = prompt("Reason? (e.g., Restock, Damaged, Correction)", "Manual Update");
+      if (!reason) return; // Cancelled
+
+      showStatus("Updating...", false);
+      
+      // 1. Handle Components
+      if(type === 'comp') {
+          google.script.run.withSuccessHandler(res => {
+             showStatus("Saved", true);
+             google.script.run.withSuccessHandler(d => { stockData = d; openComponentStock(); }).getInventoryData();
+          }).adjustComponentStock(rowIndex, num, reason);
+      }
+
+      // 2. Handle Wood (THIS WAS MISSING)
+      if(type === 'wood') {
+          google.script.run.withSuccessHandler(res => {
+             showStatus("Saved", true);
+             google.script.run.withSuccessHandler(d => { stockData = d; openWoodStock(); }).getInventoryData();
+          }).adjustWoodStock(rowIndex, num, reason);
+      }
+
+      if(type === 'edge') {
+  google.script.run.withSuccessHandler(res => {
+     showStatus("Saved", true);
+     google.script.run.withSuccessHandler(d => { stockData = d; openEdgeStock(); }).getInventoryData();
+  }).adjustEdgeStock(rowIndex, num, reason);
+}
+
+  }
+
+  function loadToBed(rowIndex, materialName) {
+      if(!confirm(`Confirm loading 1 sheet of ${materialName}?`)) return;
+      
+      showStatus("Loading...", false);
+      google.script.run.withSuccessHandler(res => {
+          showStatus("Stock Updated", true);
+          // Refresh
+          google.script.run.withSuccessHandler(d => { stockData = d; filterStockByJob(); }).getInventoryData();
+      }).adjustWoodStock(rowIndex, -1, "CNC Production");
+  }
+
+  function openWoodStock() {
+  // default to Full Sheets
+  switchWoodSubTab(currentWoodSubTab || 'instock');
+}
+
+  // --- ALLOCATION LOGIC ---
+
+  let currentAllocItem = null;
+
+  function openAllocateModal(rowIndex) {
+      // 1. Find the item data
+      const item = stockData.wood.find(w => w.rowIndex === rowIndex);
+      if (!item) return;
+      currentAllocItem = item;
+
+      // 2. Populate UI
+      document.getElementById('alloc-material-name').innerText = `${item.type}: ${item.material} (${item.size})`;
+      document.getElementById('alloc-row-index').value = rowIndex;
+      document.getElementById('alloc-qty').value = 1;
+      
+      // Reset Offcut fields
+      document.getElementById('alloc-log-offcut').checked = false;
+      document.getElementById('alloc-offcut-fields').classList.add('hidden');
+      document.getElementById('off-len').value = '';
+      document.getElementById('off-wid').value = '';
+
+      // 3. Populate Projects Dropdown (from rawData)
+      const projSelect = document.getElementById('alloc-project-select');
+      projSelect.innerHTML = '<option value="">-- Select Active Job --</option>';
+      
+      // Sort orders by ID desc
+      Object.keys(rawData).sort().reverse().forEach(id => {
+          const cust = rawData[id].customer;
+          const opt = document.createElement('option');
+          opt.value = id;
+          opt.text = `${cust} (#${id})`;
+          projSelect.appendChild(opt);
+      });
+
+      // 4. Show Modal
+      new bootstrap.Modal(document.getElementById('allocateModal')).show();
+  }
+
+  function populateAllocProducts() {
+      const orderId = document.getElementById('alloc-project-select').value;
+      const wrap = document.getElementById('alloc-prod-wrapper');
+      const prodSelect = document.getElementById('alloc-product-select');
+      
+      prodSelect.innerHTML = '';
+      
+      if (!orderId) {
+          wrap.classList.add('hidden');
+          return;
+      }
+
+      const products = rawData[orderId].products;
+      for (const prodName in products) {
+          const opt = document.createElement('option');
+          opt.value = prodName;
+          opt.text = prodName;
+          prodSelect.appendChild(opt);
+      }
+      wrap.classList.remove('hidden');
+  }
+
+  function stepAllocQty(change) {
+      const el = document.getElementById('alloc-qty');
+      let val = parseInt(el.value) || 0;
+      val += change;
+      if (val < 1) val = 1;
+      // Optional: Check max stock
+      if (val > currentAllocItem.qty) val = currentAllocItem.qty;
+      el.value = val;
+  }
+
+  function toggleOffcutFields() {
+      const isChecked = document.getElementById('alloc-log-offcut').checked;
+      document.getElementById('alloc-offcut-fields').classList.toggle('hidden', !isChecked);
+  }
+
+  function confirmAllocation() {
+      const rowIndex = parseInt(document.getElementById('alloc-row-index').value);
+      const project = document.getElementById('alloc-project-select').value;
+      const product = document.getElementById('alloc-product-select').value;
+      const qtyUsed = parseInt(document.getElementById('alloc-qty').value);
+      
+      if (!project) { alert("Please select a Project."); return; }
+      
+      // Offcut Data
+      let offcuts = null;
+      if (document.getElementById('alloc-log-offcut').checked) {
+          const len = document.getElementById('off-len').value;
+          const wid = document.getElementById('off-wid').value;
+          const qty = document.getElementById('off-qty').value;
+          
+          if (!len || !wid) { alert("Please enter Offcut dimensions."); return; }
+          offcuts = { length: len, width: wid, qty: parseInt(qty) || 1 };
+      }
+
+      // Close Modal
+      const modalEl = document.getElementById('allocateModal');
+      const modal = bootstrap.Modal.getInstance(modalEl);
+      modal.hide();
+
+      showStatus("Allocating...", false);
+
+      // Send to Backend
+      google.script.run
+  .withSuccessHandler(() => {
+    showStatus("Allocated!", true);
+
+    // open the cutting picker immediately
+    openCncCutModal(project, product);
+
+    // (optional) refresh stock list like you already do
+    google.script.run.withSuccessHandler(d => { stockData = d; filterStockByJob(); }).getInventoryData();
+  })
+  .withFailureHandler(err => { alert("Error: " + err); showStatus("Error", false); })
+  .allocateWood(rowIndex, qtyUsed, project, product, offcuts);
+
+  }
+
+
+  // --- UPDATED STOCK ADJUSTMENT LOGIC ---
+
+  function openAdjustModal(type, rowIndex, preferredTarget) {
+  document.getElementById('adj-type').value = type;
+  document.getElementById('adj-row-index').value = rowIndex;
+
+  // Default: hide On Order + target selector
+  document.getElementById('adj-target-wrapper').style.display = 'none';
+  document.getElementById('adj-onorder-row').style.display = 'none';
+  document.getElementById('adj-target').value = (preferredTarget === 'onorder') ? 'onorder' : 'stock';
+
+  let label = '...';
+  let inStock = 0;
+  let onOrder = 0;
+
+  if (type === 'wood') {
+    const item = (stockData.wood || []).find(x => x.rowIndex === rowIndex);
+    if (item) { label = item.material; inStock = item.qty; onOrder = item.onOrder; }
+    document.getElementById('adj-target-wrapper').style.display = '';
+    document.getElementById('adj-onorder-row').style.display = '';
+    document.getElementById('adj-onorder-stock').innerText = onOrder;
+  }
+
+  if (type === 'edge') {
+    const item = (stockData.edge || []).find(x => x.rowIndex === rowIndex);
+    if (item) { label = `Edge: ${item.material} | ${item.thickness}mm`; inStock = item.rolls; onOrder = item.onOrder; }
+    document.getElementById('adj-target-wrapper').style.display = '';
+    document.getElementById('adj-onorder-row').style.display = '';
+    document.getElementById('adj-onorder-stock').innerText = onOrder;
+  }
+
+  if (type === 'comp') {
+    const item = (stockData.components || []).find(x => x.rowIndex === rowIndex);
+    if (item) { label = `Component: ${item.sku} | ${item.name}`; inStock = item.stock; }
+  }
+
+  document.getElementById('adj-item-label').innerText = label;
+  document.getElementById('adj-current-stock').innerText = inStock;
+
+  document.getElementById('adj-qty').value = '';
+  document.getElementById('adj-reason').value = '';
+  document.getElementById('adj-reason-manual').value = '';
+  document.getElementById('adj-other-wrapper').classList.add('hidden');
+
+  new bootstrap.Modal(document.getElementById('adjustStockModal')).show();
+}
+
+function openStockHistory(type, rowIndex) {
+  let key = '';
+
+  if (type === 'wood') {
+    const item = (stockData.wood || []).find(x => x.rowIndex === rowIndex);
+    if (item) key = item.material;
+  }
+
+  if (type === 'comp') {
+    const item = (stockData.components || []).find(x => x.rowIndex === rowIndex);
+    if (item) key = `Component: ${item.sku} | ${item.name}`;
+  }
+
+  if (type === 'edge') {
+    const item = (stockData.edge || []).find(x => x.rowIndex === rowIndex);
+    if (item) key = `Edge: ${item.material} | ${item.thickness}mm`;
+  }
+
+  if (!key) { alert("Could not find item for history."); return; }
+  openHistoryModal(key);
+}
+
+
+
+
+function toggleAdjOtherField() {
+      const selectVal = document.getElementById('adj-reason').value;
+      const otherWrapper = document.getElementById('adj-other-wrapper');
+      
+      if (selectVal === 'Other') {
+          otherWrapper.classList.remove('hidden');
+          setTimeout(() => document.getElementById('adj-reason-manual').focus(), 100);
+      } else {
+          otherWrapper.classList.add('hidden');
+      }
+  }
+
+  function commitAdjustment() {
+  const rowIndex = parseInt(document.getElementById('adj-row-index').value);
+  const type = document.getElementById('adj-type').value;
+  const change = parseInt(document.getElementById('adj-qty').value);
+  const target = document.getElementById('adj-target') ? document.getElementById('adj-target').value : 'stock';
+
+  const selectVal = document.getElementById('adj-reason').value;
+  let finalReason = selectVal;
+
+  if (isNaN(change) || change === 0) { alert("Please enter a valid quantity (e.g. 10 or -5)."); return; }
+  if (!selectVal) { alert("Please select a Reason."); return; }
+
+  if (selectVal === 'Other') {
+    const manualText = document.getElementById('adj-reason-manual').value.trim();
+    if (!manualText) { alert("Please type a reason in the text box."); return; }
+    finalReason = manualText;
+  }
+
+  bootstrap.Modal.getInstance(document.getElementById('adjustStockModal')).hide();
+  showStatus("Updating...", false);
+
+  const refresh = () => {
+    google.script.run.withSuccessHandler(d => {
+      stockData = d;
+      if (type === 'wood') openWoodStock();
+      if (type === 'comp') openComponentStock();
+      if (type === 'edge') openEdgeStock();
+      showStatus("Saved", true);
+    }).getInventoryData();
+  };
+
+  // WOOD
+  if (type === 'wood') {
+    if (target === 'onorder') {
+      google.script.run.withSuccessHandler(refresh).withFailureHandler(err => alert(err.message)).adjustWoodOnOrder(rowIndex, change);
+    } else {
+      google.script.run.withSuccessHandler(refresh).withFailureHandler(err => alert(err.message)).adjustWoodStock(rowIndex, change, finalReason);
+    }
+    return;
+  }
+
+  // EDGE
+  if (type === 'edge') {
+    if (target === 'onorder') {
+      google.script.run.withSuccessHandler(refresh).withFailureHandler(err => alert(err.message)).adjustEdgeOnOrder(rowIndex, change);
+    } else {
+      google.script.run.withSuccessHandler(refresh).withFailureHandler(err => alert(err.message)).adjustEdgeStock(rowIndex, change, finalReason);
+    }
+    return;
+  }
+
+  // COMPONENTS (always stock)
+  if (type === 'comp') {
+    google.script.run.withSuccessHandler(refresh).withFailureHandler(err => alert(err.message)).adjustComponentStock(rowIndex, change, finalReason);
+    return;
+  }
+
+  alert("Unknown stock type");
+}
+
+function openReceiveModal(type, rowIndex) {
+  document.getElementById('recv-type').value = type;
+  document.getElementById('recv-row-index').value = rowIndex;
+
+  let label = '...';
+  let onOrder = 0;
+
+  if (type === 'wood') {
+    const item = (stockData.wood || []).find(x => x.rowIndex === rowIndex);
+    if (item) { label = item.material; onOrder = item.onOrder; }
+  }
+  if (type === 'edge') {
+    const item = (stockData.edge || []).find(x => x.rowIndex === rowIndex);
+    if (item) { label = `Edge: ${item.material} | ${item.thickness}mm`; onOrder = item.onOrder; }
+  }
+
+  document.getElementById('recv-item-label').innerText = label;
+  document.getElementById('recv-onorder').innerText = onOrder;
+  document.getElementById('recv-qty').value = onOrder; // default = receive all
+
+  new bootstrap.Modal(document.getElementById('receiveModal')).show();
+}
+
+function commitReceive() {
+  const type = document.getElementById('recv-type').value;
+  const rowIndex = parseInt(document.getElementById('recv-row-index').value);
+  const qty = parseInt(document.getElementById('recv-qty').value);
+
+  if (!qty || qty <= 0) { alert("Enter a valid quantity to receive."); return; }
+
+  bootstrap.Modal.getInstance(document.getElementById('receiveModal')).hide();
+  showStatus("Receiving...", false);
+
+  const refresh = () => {
+    google.script.run.withSuccessHandler(d => {
+      stockData = d;
+      if (type === 'wood') openWoodStock();
+      if (type === 'edge') openEdgeStock();
+      showStatus("Saved", true);
+    }).getInventoryData();
+  };
+
+  if (type === 'wood') {
+    google.script.run.withSuccessHandler(refresh).withFailureHandler(err => alert(err.message)).receiveWoodFromOrder(rowIndex, qty);
+  } else if (type === 'edge') {
+    google.script.run.withSuccessHandler(refresh).withFailureHandler(err => alert(err.message)).receiveEdgeFromOrder(rowIndex, qty);
+  }
+}
+
+
+  function openHistoryModal(materialName) {
+      // 1. Setup Modal UI
+      document.getElementById('hist-material-title').innerText = materialName;
+      const tbody = document.getElementById('history-table-body');
+      tbody.innerHTML = ''; // Clear previous
+      document.getElementById('history-loading').classList.remove('hidden');
+      
+      new bootstrap.Modal(document.getElementById('historyModal')).show();
+
+      // 2. Fetch Data
+      google.script.run
+        .withSuccessHandler(history => {
+            document.getElementById('history-loading').classList.add('hidden');
+            
+            if (!history || history.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="2" class="text-center text-muted py-3">No history found.</td></tr>';
+                return;
+            }
+
+            let html = '';
+            history.forEach(h => {
+                // Determine Colors
+                const badgeClass = h.change > 0 ? 'text-success' : (h.change < 0 ? 'text-danger' : 'text-muted');
+                const sign = h.change > 0 ? '+' : '';
+
+                // Render Row (Using the server-side dateStr)
+                html += `
+                    <tr>
+                        <td class="ps-3" style="width: 30%;">
+                            <div class="fw-bold ${badgeClass}" style="font-size:1.1rem;">${sign}${h.change}</div>
+                            <div class="small text-muted" style="font-size:0.75rem;">${h.dateStr}</div>
+                        </td>
+                        <td class="pe-3">
+                            <div class="fw-bold text-dark" style="font-size:0.9rem;">${h.reason}</div>
+                            <div class="small text-muted" style="font-size:0.75rem;">User: ${h.user}</div>
+                        </td>
+                    </tr>
+                `;
+            });
+            tbody.innerHTML = html;
+        })
+        .withFailureHandler(err => {
+            document.getElementById('history-loading').classList.add('hidden');
+            tbody.innerHTML = `<tr><td colspan="2" class="text-danger text-center py-3">Error: ${err.message}</td></tr>`;
+        })
+        .getMaterialHistory(materialName);
+  }
+
+  function populateCNCJobSelect() {
+      const select = document.getElementById('cnc-job-filter');
+      if(!select) return; // Safety check
+      
+      select.innerHTML = '<option value="">-- Show All Stock --</option>';
+      
+      // Populate with Orders
+      Object.keys(rawData).reverse().forEach(id => {
+          const cust = rawData[id].customer;
+          const opt = document.createElement('option');
+          opt.value = id;
+          opt.text = `${cust} (#${id})`;
+          select.appendChild(opt);
+      });
+
+      // If we entered CNC view from a specific order, auto-select it
+      if(currentOrder) {
+          select.value = currentOrder;
+          filterStockByJob(); // <--- TRIGGERS THE FILTER
+      }
+  }
+
+  function filterStockByJob() {
+  const orderId = document.getElementById('cnc-job-filter')?.value;
+  const bannerSlot = document.getElementById('cnc-filter-banner-slot');
+  if (bannerSlot) bannerSlot.innerHTML = "";
+
+  // Safety: if stock not loaded yet
+  if (!stockData.wood || !Array.isArray(stockData.wood)) {
+    cncWoodViewData = [];
+    renderWoodStock(cncWoodViewData, 'cnc');
+    return;
+  }
+
+  // If "Show All" selected
+  if (!orderId) {
+    cncWoodViewData = stockData.wood;
+    renderWoodStock(cncWoodViewData, 'cnc');
+    return;
+  }
+
+  // 1) Materials needed for this job (from panels)
+  const requiredMaterials = new Set();
+
+  if (rawData[orderId] && rawData[orderId].products) {
+    const products = rawData[orderId].products;
+    for (const productKey in products) {
+      if (products[productKey].panels) {
+        products[productKey].panels.forEach(p => {
+          if (p.material) {
+            const mat = String(p.material).trim().toLowerCase();
+            if (mat.length > 2) requiredMaterials.add(mat);
+          }
+        });
+      }
+    }
+  }
+
+  const reqArray = Array.from(requiredMaterials);
+
+  // 2) Filter wood stock by material match
+  const filteredList = stockData.wood.filter(item => {
+    const stockMat = String(item.material).trim().toLowerCase();
+    if (stockMat.length < 2) return false;
+
+    return reqArray.some(req => stockMat.includes(req) || req.includes(stockMat));
+  });
+
+  // 3) Render + banner
+  if (filteredList.length > 0) {
+    cncWoodViewData = filteredList;
+    renderWoodStock(cncWoodViewData, 'cnc');
+
+    if (bannerSlot) {
+      bannerSlot.innerHTML = `
+        <div class="alert alert-success py-2 mb-2 small shadow-sm">
+          Found ${filteredList.length} items for <strong>${rawData[orderId].customer}</strong>
+          <span class="float-end text-decoration-underline" style="cursor:pointer"
+                onclick="document.getElementById('cnc-job-filter').value=''; filterStockByJob();">
+            Clear
+          </span>
+        </div>`;
+    }
+  } else {
+    cncWoodViewData = stockData.wood;
+    renderWoodStock(cncWoodViewData, 'cnc');
+
+    if (bannerSlot) {
+      bannerSlot.innerHTML = `
+        <div class="alert alert-warning py-2 mb-2 small shadow-sm">
+          <strong>No Match Found!</strong> Showing all stock.<br>
+          Job Needs: "<em>${reqArray.join(', ')}</em>"
+        </div>`;
+    }
+  }
+}
+
+let shopifyOrdersModalInst = null;
+let shopifyBusyRows = new Set();
+
+function openShopifyOrders() {
+  const modalEl = document.getElementById("shopifyOrdersModal");
+  if (!modalEl) { alert("Missing #shopifyOrdersModal in Index.html"); return; }
+
+  if (!shopifyOrdersModalInst) {
+    shopifyOrdersModalInst = new bootstrap.Modal(modalEl, { backdrop: true, keyboard: true });
+
+    // Cleanup overlay issues
+    modalEl.addEventListener("hidden.bs.modal", () => {
+      document.querySelectorAll(".modal-backdrop").forEach(b => b.remove());
+      document.body.classList.remove("modal-open");
+      document.body.style.removeProperty("padding-right");
+    });
+  }
+
+  shopifyOrdersModalInst.show();
+  refreshShopifyOrdersModal();
+}
+
+function reloadShopifyOrdersList() {
+  // Refresh content ONLY (do not re-open the modal)
+  refreshShopifyOrdersModal();
+}
+
+function refreshShopifyOrdersModal() {
+  const listEl = document.getElementById("shopify-orders-list");
+  if (listEl) listEl.innerHTML = `<div class="text-center text-muted py-4"><div class="spinner-border"></div></div>`;
+
+  google.script.run
+    .withSuccessHandler(rows => {
+      renderShopifyOrdersModal(rows || []);
+    })
+    .withFailureHandler(err => {
+      if (listEl) listEl.innerHTML = `<div class="text-danger">Error: ${err.message}</div>`;
+    })
+    .getPendingShopifyOrdersWithStock();
+}
+
+function renderShopifyOrdersModal(rows) {
+  const listEl = document.getElementById("shopify-orders-list");
+  if (!listEl) return;
+
+  if (!rows.length) {
+    listEl.innerHTML = `<div class="text-muted text-center py-3">No pending orders.</div>`;
+
+    // Auto-close if nothing left
+    if (shopifyOrdersModalInst) {
+      setTimeout(() => shopifyOrdersModalInst.hide(), 600);
+    }
+    reloadAllData();
+    return;
+  }
+
+  // Group by orderId + customer
+  const groups = {};
+  rows.forEach(r => {
+    const key = `${r.orderId}|||${r.customer}`;
+    if (!groups[key]) groups[key] = { orderId: r.orderId, customer: r.customer, lines: [] };
+    groups[key].lines.push(r);
+  });
+
+  const keys = Object.keys(groups).sort((a,b) => {
+    const A = groups[a], B = groups[b];
+    return String(B.orderId).localeCompare(String(A.orderId)); // newest first
+  });
+
+  const esc = (s) => String(s ?? "")
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+
+  const accordId = "shopify-orders-accordion";
+  let html = `<div class="accordion" id="${accordId}">`;
+
+  keys.forEach((k, idx) => {
+    const g = groups[k];
+    const lines = g.lines;
+
+    const collapseId = `so-collapse-${idx}`;
+    const headingId = `so-heading-${idx}`;
+
+    // Totals for header (clear and unambiguous)
+    const totalOrdered = lines.reduce((s, r) => s + (Number(r.qtyOrdered) || 0), 0);
+    const totalAllocated = lines.reduce((s, r) => s + (Number(r.allocatedFromStock) || 0), 0);
+    const totalToBuild = Math.max(0, totalOrdered - totalAllocated);
+
+    const rowsHtml = lines.map(r => {
+      const rowIndex = Number(r.rowIndex);
+      const ordered = Number(r.qtyOrdered) || 0;
+      const inStock = Number(r.availableInStock) || 0;
+      const allocated = Number(r.allocatedFromStock) || 0;
+      const toBuild = Math.max(0, ordered - allocated);
+      const suggested = Number(r.recommendedAllocate) || 0;
+
+      const busy = shopifyBusyRows.has(rowIndex);
+      const disableAlloc = busy || (inStock <= 0) || (toBuild <= 0);
+      const disableApprove = busy;
+
+      return `
+        <tr style="${busy ? "opacity:0.6;" : ""}">
+          <td>
+            <div class="fw-bold">${esc(r.sku)}</div>
+            <div class="small text-muted">${esc(r.productName)}</div>
+
+            <div class="small mt-1">
+              <span class="badge bg-dark me-1">Ordered ${ordered}</span>
+              <span class="badge bg-primary me-1">Allocated ${allocated}</span>
+              <span class="badge bg-warning text-dark">To Build ${toBuild}</span>
+            </div>
+
+            <div class="small text-muted mt-2">
+              ✅ Approve will <strong>import the full order</strong> but will <strong>pre-fill progress</strong> for the Allocated qty.
+            </div>
+          </td>
+
+          <td class="text-center">
+            <span class="badge ${inStock > 0 ? "bg-success" : "bg-secondary"}">${inStock}</span>
+          </td>
+
+          <td class="text-end" style="white-space:nowrap;">
+            <button class="btn btn-outline-dark btn-sm rounded-pill me-1"
+                    onclick="approveShopifyLine(${rowIndex}, this)"
+                    ${disableApprove ? "disabled" : ""}>
+              Import (Build ${toBuild})
+            </button>
+
+            <button class="btn btn-dark btn-sm rounded-pill"
+                    onclick="allocateShopifyLine(${rowIndex}, ${inStock}, ${toBuild}, ${suggested})"
+                    ${disableAlloc ? "disabled" : ""}>
+              Allocate Stock
+            </button>
+          </td>
+        </tr>
+      `;
+    }).join("");
+
+    html += `
+      <div class="accordion-item border-0 mb-2 room-acc">
+        <h2 class="accordion-header" id="${headingId}">
+          <button class="accordion-button collapsed room-acc-btn"
+                  type="button"
+                  data-bs-toggle="collapse"
+                  data-bs-target="#${collapseId}"
+                  aria-expanded="false"
+                  aria-controls="${collapseId}">
+            <div class="d-flex w-100 justify-content-between align-items-center">
+              <div class="fw-bold text-dark">${esc(g.customer)} — #${esc(g.orderId)}</div>
+              <div class="d-flex gap-2 flex-wrap justify-content-end">
+                <span class="badge bg-dark">Ordered ${totalOrdered}</span>
+                <span class="badge bg-primary">Allocated ${totalAllocated}</span>
+                <span class="badge bg-warning text-dark">To Build ${totalToBuild}</span>
+              </div>
+            </div>
+          </button>
+        </h2>
+
+        <div id="${collapseId}" class="accordion-collapse collapse"
+             aria-labelledby="${headingId}"
+             data-bs-parent="#${accordId}">
+          <div class="accordion-body pt-2">
+            <div class="table-responsive">
+              <table class="table table-hover align-middle mb-0">
+                <thead class="bg-light">
+                  <tr class="text-secondary small">
+                    <th>SKU / Breakdown</th>
+                    <th class="text-center" style="width:120px;">In Stock</th>
+                    <th class="text-end" style="width:260px;">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${rowsHtml}
+                </tbody>
+              </table>
+            </div>
+
+            <div class="small text-muted mt-2">
+              You can close this anytime and continue later — imported lines disappear automatically.
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  });
+
+  html += `</div>`;
+  listEl.innerHTML = html;
+}
+
+function allocateShopifyLine(shopifyRowIndex, inStock, remainingToAllocate, suggested) {
+  const maxAlloc = Math.min(Number(inStock) || 0, Number(remainingToAllocate) || 0);
+  if (maxAlloc <= 0) { alert("No stock available to allocate for this line."); return; }
+
+  const def = Math.min(Number(suggested) || maxAlloc, maxAlloc);
+  const entered = prompt(`Allocate how many from stock now? (1-${maxAlloc})`, String(def));
+  if (entered === null) return;
+
+  const qty = parseInt(entered, 10);
+  if (!qty || qty < 1 || qty > maxAlloc) { alert("Invalid quantity."); return; }
+
+  shopifyBusyRows.add(shopifyRowIndex);
+  showStatus("Allocating...", false);
+
+  google.script.run
+    .withSuccessHandler(() => {
+      showStatus("Allocated!", true);
+      shopifyBusyRows.delete(shopifyRowIndex);
+
+      // refresh stock + orders list + app UI
+      refreshShopifyOrdersModal();
+      reloadAllData();
+    })
+    .withFailureHandler(err => {
+      shopifyBusyRows.delete(shopifyRowIndex);
+      alert("Allocation failed: " + err.message);
+      showStatus("Error", true);
+      refreshShopifyOrdersModal();
+    })
+    .allocateFinishedGoodsToOrder(shopifyRowIndex, qty);
+}
+
+function approveShopifyLine(shopifyRowIndex, btnElement) {
+  if (!confirm("Approve & import this line into Manufacturing/Delivery now?")) return;
+
+  // 1. DISABLE BUTTON IMMEDIATELY (Prevent Double Click)
+  if (btnElement) {
+    btnElement.disabled = true;
+    btnElement.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Importing...';
+  }
+
+  shopifyBusyRows.add(shopifyRowIndex);
+  showStatus("Importing...", false);
+
+  google.script.run
+    .withSuccessHandler(res => {
+      shopifyBusyRows.delete(shopifyRowIndex);
+
+      if (String(res) !== "SUCCESS" && String(res) !== "Already imported") {
+        alert("Import result: " + res);
+        // Re-enable if it failed logically (so they can try again or fix it)
+        if (btnElement) {
+            btnElement.disabled = false;
+            btnElement.innerText = "Retry Import";
+        }
+      } else {
+        showStatus("Imported!", true);
+        // Refresh the list to remove the row
+        refreshShopifyOrdersModal();
+        reloadAllData();
+      }
+    })
+    .withFailureHandler(err => {
+      shopifyBusyRows.delete(shopifyRowIndex);
+      alert("Approve/Import failed: " + err.message);
+      showStatus("Error", true);
+      // Re-enable on crash
+      if (btnElement) {
+        btnElement.disabled = false;
+        btnElement.innerText = "Import (Retry)";
+      }
+    })
+    .approveAndImportShopifyRow(shopifyRowIndex);
+}
+
+
+  // --- FURNITURE STOCK FRONTEND ---
+
+  function mergeWorkshopStockOrders() {
+  const wsKey = "WORKSHOP";
+  const ws = { id: wsKey, customer: "Workshop Stock", products: {}, delivery: { bucket: {}, rooms: {} } };
+
+  const keys = Object.keys(rawData || {});
+  const toRemove = [];
+
+  keys.forEach(orderId => {
+    const o = rawData[orderId];
+    if (!o) return;
+
+    if (norm(o.customer).toLowerCase() === "workshop stock") {
+      toRemove.push(orderId);
+
+      // Merge products
+      for (const prodKey in (o.products || {})) {
+        if (!ws.products[prodKey]) ws.products[prodKey] = { panels: [], components: [] };
+
+        const src = o.products[prodKey];
+        if (src.panels && src.panels.length) ws.products[prodKey].panels.push(...src.panels);
+        if (src.components && src.components.length) ws.products[prodKey].components.push(...src.components);
+      }
+    }
+  });
+
+  // Remove individual workshop orders
+  toRemove.forEach(k => delete rawData[k]);
+
+  // Add single virtual workshop order if any existed
+  if (Object.keys(ws.products).length) rawData[wsKey] = ws;
+}
+
+  
+  let furnitureData = [];
+
+  function openFurnitureStock() {
+      loadFurnitureStock();
+  }
+
+  function loadFurnitureStock() {
+      const list = document.getElementById('furniture-list');
+      list.innerHTML = '<div class="text-center text-muted mt-5"><div class="spinner-border"></div></div>';
+      
+      google.script.run
+        .withSuccessHandler(data => {
+            furnitureData = data;
+            renderFurnitureList();
+        })
+        .getFurnitureStock();
+  }
+
+  function renderFurnitureList() {
+      const list = document.getElementById('furniture-list');
+      const loader = document.getElementById('furniture-loading');
+      
+      if(loader) loader.classList.add('hidden');
+      list.innerHTML = '';
+
+      if (furnitureData.length === 0) {
+          list.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-4">No finished items in stock.</td></tr>';
+          return;
+      }
+
+      let html = '';
+      furnitureData.forEach(item => {
+          html += `
+            <tr class="furn-row" style="cursor:pointer;" onclick="adjustFurniture(${item.rowIndex})">
+                <td class="ps-3 fw-bold text-dark">${item.customer}</td>
+                <td>
+                    <div class="fw-bold text-dark">${item.product}</div>
+                    <div class="small text-muted">${item.sku}</div>
+                </td>
+                <td class="text-center">
+                    <span class="badge bg-success fs-6">${item.qty}</span>
+                </td>
+                <td class="text-end pe-3 text-muted">±</td>
+            </tr>`;
+      });
+      list.innerHTML = html;
+  }
+
+  function adjustFurniture(rowIndex) {
+      const val = prompt("Adjust Furniture Quantity (+/-):");
+      const change = parseInt(val);
+      if(!change) return;
+      
+      const reason = prompt("Reason (e.g. Built for stock, Damaged, Delivered):");
+      if(!reason) return;
+
+      google.script.run
+        .withSuccessHandler(() => { loadFurnitureStock(); })
+        .adjustFurnitureStock(rowIndex, change, reason);
+  }
+
+  function openEdgeStock() {
+  switchEdgeSubTab(currentEdgeSubTab || 'instock');
+}
+
+function getCompByRow(rowIndex) {
+  const comps = rawData[currentOrder].products[currentProduct].components || [];
+  return comps.find(c => c.rowIndex === rowIndex);
+}
+
+// NEW HELPER: Find component anywhere (Global Search)
+function findComponentGlobally(rowIndex) {
+  if (!rawData) return null;
+  // Search every order -> every product -> every component list
+  for (const ord of Object.values(rawData)) {
+    if (!ord.products) continue;
+    for (const prod of Object.values(ord.products)) {
+      if (prod.components) {
+        const found = prod.components.find(c => String(c.rowIndex) === String(rowIndex));
+        if (found) return found;
+      }
+    }
+  }
+  return null;
+}
+
+function queueCompDelta(rowIndex, delta) {
+  const key = String(rowIndex);
+
+  if (!pendingCompUpdates[key]) {
+    pendingCompUpdates[key] = {
+      rowIndex,
+      mode: "inc",
+      delta: 0,
+      opId: makeOpId(),
+      ts: Date.now()
+    };
+  }
+
+  // If a SET is already queued, don’t switch modes; just adjust the target
+  if (pendingCompUpdates[key].mode === "set") {
+    pendingCompUpdates[key].value = Number(pendingCompUpdates[key].value || 0) + Number(delta || 0);
+  } else {
+    pendingCompUpdates[key].delta = Number(pendingCompUpdates[key].delta || 0) + Number(delta || 0);
+  }
+
+  pendingCompUpdates[key].ts = Date.now();
+  showStatus("Saving...", false);
+  markUnsaved();
+
+  if (compSaveTimer) clearTimeout(compSaveTimer);
+  compSaveTimer = setTimeout(sendCompQueueToServer, 400);
+}
+
+function queueCompSet(rowIndex, base, value) {
+  const key = String(rowIndex);
+
+  pendingCompUpdates[key] = {
+    rowIndex,
+    mode: "set",
+    base: Number(base || 0),
+    value: Number(value || 0),
+    opId: makeOpId(),
+    ts: Date.now()
+  };
+
+  showStatus("Saving...", false);
+  markUnsaved();
+
+  if (compSaveTimer) clearTimeout(compSaveTimer);
+  compSaveTimer = setTimeout(sendCompQueueToServer, 400);
+}
+
+
+function sendCompQueueToServer() {
+  if (compSaveInFlight) {
+    if (compSaveTimer) clearTimeout(compSaveTimer);
+    compSaveTimer = setTimeout(sendCompQueueToServer, 300);
+    return;
+  }
+
+  const sending = pendingCompUpdates || {};
+  const payload = Object.values(sending);
+
+  if (!payload.length) {
+    clearUnsavedIfEmptyQueues();
+    return;
+  }
+
+  inFlightCompUpdates = sending;
+  pendingCompUpdates = {};
+
+  compSaveInFlight = true;
+  showStatus("Saving.", false);
+
+  google.script.run
+    .withSuccessHandler((res) => {
+      compSaveInFlight = false;
+
+      if (!Array.isArray(res)) {
+        for (const k in inFlightCompUpdates) if (!pendingCompUpdates[k]) pendingCompUpdates[k] = inFlightCompUpdates[k];
+        inFlightCompUpdates = {};
+        markUnsaved("Not saved: unexpected server response.");
+        showStatus("Not saved", true);
+        return;
+      }
+
+      res.forEach(r => {
+        const key = String(r.rowIndex);
+        delete inFlightCompUpdates[key];
+
+        if (r.conflict) {
+          // Re-queue what we attempted if there’s no newer edit already
+          if (!pendingCompUpdates[key]) pendingCompUpdates[key] = sending[key];
+          markUnsaved("Conflict: someone else updated components. Reload & retry.");
+          return;
+        }
+
+        // If user changed again while saving, don't overwrite UI
+        if (pendingCompUpdates[key]) return;
+
+        const el = document.getElementById(`comp-packed-${r.rowIndex}`);
+        if (el && r.value !== undefined) el.value = r.value;
+
+        const c = getCompByRow(r.rowIndex);
+        if (c && r.value !== undefined) c.qtyPacked = r.value;
+      });
+
+      if (Object.keys(pendingCompUpdates).length > 0) {
+        if (compSaveTimer) clearTimeout(compSaveTimer);
+        compSaveTimer = setTimeout(sendCompQueueToServer, 0);
+        markUnsaved();
+        return;
+      }
+
+      clearUnsavedIfEmptyQueues();
+      showStatus("Saved", true);
+    })
+    .withFailureHandler((err) => {
+      compSaveInFlight = false;
+      setHealthBadge(false);
+
+      for (const k in inFlightCompUpdates) if (!pendingCompUpdates[k]) pendingCompUpdates[k] = inFlightCompUpdates[k];
+      inFlightCompUpdates = {};
+
+      markUnsaved("Not saved (connection/server issue).");
+      showStatus("Not saved", true);
+      console.log("Component save failed:", err);
+    })
+    .processComponentBatch(payload);
+}
+
+
+
+function compStep(e, rowIndex, dir) {
+  if (e) { e.preventDefault(); e.stopPropagation(); }
+  const c = getCompByRow(rowIndex);
+  if (!c) return;
+
+  const per = Number(c.qtyPerUnit) || 1;
+  const req = Number(c.qtyRequired) || 0;
+  const cur = Number(c.qtyPacked) || 0;
+
+  let next = cur + (dir * per);
+  if (next < 0) next = 0;
+  if (req > 0 && next > req) next = req;
+
+  c.qtyPacked = next;
+
+  const input = document.getElementById('comp-packed-' + rowIndex);
+  if (input) input.value = next;
+
+  queueCompDelta(rowIndex, next - cur);
+
+}
+
+function compSetExact(e, rowIndex, rawVal) {
+  if (e) { e.stopPropagation(); }
+
+  const c = getCompByRow(rowIndex);
+  if (!c) return;
+
+  const req = Number(c.qtyRequired) || 0;
+  const cur = Number(c.qtyPacked) || 0;
+
+  let next = parseInt(rawVal, 10);
+  if (isNaN(next)) next = 0;
+
+  if (next < 0) next = 0;
+  if (req > 0 && next > req) next = req;
+
+  c.qtyPacked = next;
+  queueCompSet(rowIndex, cur, next);
+}
+
+
+function calcPanelGate(prodData, requiredUnits) {
+  const panels = (prodData && prodData.panels) ? prodData.panels : [];
+  let minUnits = Infinity;
+  let limiter = null;
+
+  const lines = panels.map(p => {
+    const per = Number(p.qtyPerUnit) || 1;
+    const packed = Number(p.qtyPacked) || 0;
+    const required = Number(p.qtyOrder) || 0;
+    const units = Math.floor(packed / per);
+
+    if (units < minUnits) {
+      minUnits = units;
+      limiter = { name: p.panelName, packed, required, per, units };
+    }
+
+    return { type: "Panel", name: p.panelName, packed, required, per, units };
+  });
+
+  if (minUnits === Infinity) minUnits = 0;
+  const ready = Math.min(minUnits, requiredUnits);
+
+  return { ready, limiter, lines };
+}
+
+function calcCompGate(prodData, requiredUnits) {
+  const comps = (prodData && prodData.components) ? prodData.components : [];
+  let minUnits = Infinity;
+  let limiter = null;
+
+  const lines = comps.map(c => {
+    const per = Number(c.qtyPerUnit) || 1;
+    const packed = Number(c.qtyPacked) || 0;
+    const required = Number(c.qtyRequired) || 0;
+    const units = Math.floor(packed / per);
+
+    if (units < minUnits) {
+      minUnits = units;
+      limiter = { name: c.compName, packed, required, per, units };
+    }
+
+    return { type: "Component", name: c.compName, packed, required, per, units };
+  });
+
+  // If no components exist, treat as "not limiting"
+  if (minUnits === Infinity) minUnits = 999999;
+  const ready = Math.min(minUnits, requiredUnits);
+
+  return { ready, limiter, lines };
+}
+
+function openGateModal(evt, prodName) {
+  if (evt) { evt.preventDefault(); evt.stopPropagation(); }
+
+  const orderObj = rawData[currentOrder];
+  if (!orderObj || !orderObj.products || !orderObj.products[prodName]) return;
+
+  const prodData = orderObj.products[prodName];
+
+  // Required units for this product
+  const del = getDeliveryTotals(orderObj, prodName);
+  const requiredUnits = getRequiredUnits(prodData, del.total);
+
+  const panelGate = calcPanelGate(prodData, requiredUnits);
+  const compGate = calcCompGate(prodData, requiredUnits);
+
+  // Build "blockers" list (only items below requiredUnits)
+  const blockers = []
+    .concat(panelGate.lines, compGate.lines)
+    .filter(x => x.units < requiredUnits)
+    .sort((a, b) => a.units - b.units)
+    .slice(0, 3);
+
+  // UI text
+  document.getElementById("gateTitle").innerText = `${prodName} (Req: ${requiredUnits})`;
+
+  const panelLine = panelGate.limiter
+    ? `${panelGate.ready} / ${requiredUnits} (limiting: ${panelGate.limiter.name})`
+    : `${panelGate.ready} / ${requiredUnits}`;
+
+  const compLine = compGate.limiter && compGate.ready < requiredUnits
+    ? `${compGate.ready} / ${requiredUnits} (limiting: ${compGate.limiter.name})`
+    : `${compGate.ready} / ${requiredUnits}${(prodData.components && prodData.components.length) ? "" : " (no components tracked)"}`;
+
+  let blockersHtml = "";
+  if (!blockers.length) {
+    blockersHtml = `<div class="text-success fw-bold">✅ No blockers — fully manufactured</div>`;
+  } else {
+    blockersHtml = blockers.map(b => {
+      const label = (b.type === "Panel") ? "Panels" : "Components";
+      return `
+        <div class="border rounded-3 p-2 mb-2">
+          <div class="fw-bold">${label}: ${b.name}</div>
+          <div class="small text-muted">
+            Packed ${b.packed} / Required ${b.required}  •  ${b.units} unit(s)
+          </div>
+        </div>
+      `;
+    }).join("");
+  }
+
+  document.getElementById("gateBody").innerHTML = `
+    <div class="mb-3">
+      <div class="fw-bold">Panels ready:</div>
+      <div class="text-muted">${panelLine}</div>
+    </div>
+
+    <div class="mb-3">
+      <div class="fw-bold">Components ready:</div>
+      <div class="text-muted">${compLine}</div>
+    </div>
+
+    <hr>
+
+    <div class="fw-bold mb-2">Top blockers:</div>
+    ${blockersHtml}
+  `;
+
+  new bootstrap.Modal(document.getElementById("gateModal")).show();
+}
+
+function rerenderCurrentView() {
+  // Always refresh job list in background
+  renderJobs();
+
+  if (!currentOrder) return;
+
+  // If you're in delivery screens, refresh their UI too
+  if (currentViewId === 'view-delivery') {
+    renderDeliverySummary();
+    // refresh whichever tab is visible
+    if (!document.getElementById('deliv-bucket-view').classList.contains('hidden')) renderBucket();
+    if (!document.getElementById('deliv-rooms-view').classList.contains('hidden')) renderRooms();
+  }
+
+  // If you're in manufacturing list, re-render it
+  if (currentViewId === 'view-manuf-list') openManufacturing();
+
+  // If you're inside a product view, refresh that view
+  if (currentViewId === 'view-panels') openPanels();
+  if (currentViewId === 'view-comps') openComponents();
+}
+
+function reloadAllData() {
+  showStatus("Refreshing...", false);
+
+  let gotData = false;
+  let gotStock = false;
+
+  const done = () => {
+    if (gotData && gotStock) {
+      rerenderCurrentView();
+      showStatus("Updated", true);
+    }
+  };
+
+  google.script.run
+    .withSuccessHandler(d => { rawData = d || {}; gotData = true; done(); })
+    .withFailureHandler(err => { alert("Refresh failed (jobs): " + err.message); gotData = true; done(); })
+    .getDataTree();
+
+  google.script.run
+    .withSuccessHandler(d => { stockData = d || {}; gotStock = true; done(); })
+    .withFailureHandler(err => { alert("Refresh failed (stock): " + err.message); gotStock = true; done(); })
+    .getInventoryData();
+}
+
+// ------------------------
+// CNC CUT SESSION (after allocate)
+// ------------------------
+let cncCutCtx = null; // { orderId, productKey, prodData }
+let pendingCncCutUpdates = {};
+let cncSaveTimer = null; // <--- MATCHES THE FUNCTION USAGE
+
+function findProductKey(orderId, productName) {
+  const orderObj = rawData[orderId];
+  if (!orderObj || !orderObj.products) return null;
+
+  const target = norm(productName);
+  for (const key in orderObj.products) {
+    if (norm(key) === target) return key;
+  }
+  return null;
+}
+
+function getCutUnits(prodData) {
+  let minUnits = Infinity;
+  const panels = (prodData && prodData.panels) ? prodData.panels : [];
+
+  if (!panels.length) return 0;
+
+  panels.forEach(p => {
+    const per = Number(p.qtyPerUnit) || 1;
+    const cut = Number(p.qtyCut) || 0;
+    const units = Math.floor(cut / per);
+    if (units < minUnits) minUnits = units;
+  });
+
+  if (minUnits === Infinity) return 0;
+  return minUnits;
+}
+
+function updateCncCutSummary() {
+  if (!cncCutCtx) return;
+
+  const orderObj = rawData[cncCutCtx.orderId];
+  const prodData = cncCutCtx.prodData;
+
+  const del = getDeliveryTotals(orderObj, cncCutCtx.productKey);
+  const requiredUnits = getRequiredUnits(prodData, del.total);
+  const cutUnits = Math.min(getCutUnits(prodData), requiredUnits);
+
+  const el = document.getElementById("cncCutSummary");
+  if (el) el.innerText = `Cut progress: ${cutUnits} / ${requiredUnits} furniture item(s)`;
+}
+
+function openCncCutModal(orderId, productName) {
+  orderId = norm(orderId);
+  productName = norm(productName);
+
+  const productKey = findProductKey(orderId, productName);
+  if (!productKey) {
+    alert("Could not find this product in rawData. Try ↻ Refresh first.");
+    return;
+  }
+
+  const prodData = rawData[orderId].products[productKey];
+  cncCutCtx = { orderId, productKey, prodData };
+
+  // Title
+  const titleEl = document.getElementById("cncCutTitle");
+  if (titleEl) titleEl.innerText = `Order ${orderId} • ${productKey}`;
+
+  // Render list
+  const listEl = document.getElementById("cncCutList");
+  const panels = (prodData && prodData.panels) ? prodData.panels : [];
+
+  if (!listEl) return;
+
+  if (!panels.length) {
+    listEl.innerHTML = `<div class="text-muted text-center py-3">No panels found for this product.</div>`;
+  } else {
+    listEl.innerHTML = panels.map(p => {
+      const req = Number(p.qtyOrder) || 0;
+      const cut = Number(p.qtyCut) || 0;
+      const rem = Math.max(0, req - cut);
+
+      return `
+  <div class="card p-3 mb-2 border-0 shadow-sm">
+    <div class="d-flex justify-content-between align-items-center">
+      <div style="flex:1; padding-right:12px;">
+        <div class="fw-bold text-dark">${p.panelName}</div>
+        <div class="small text-muted">
+          Required: ${req} • Cut: <span id="cnc-cut-${p.rowIndex}">${cut}</span> • Remaining: <span id="cnc-rem-${p.rowIndex}">${rem}</span>
+        </div>
+      </div>
+
+      <div class="d-flex gap-2">
+        <button type="button"
+                class="btn btn-outline-secondary btn-sm rounded-pill"
+                onclick="cncCutAdd(${p.rowIndex}, -1)">
+          UNDO
+        </button>
+
+        <button type="button"
+                class="btn btn-dark btn-sm rounded-pill"
+                onclick="cncCutAdd(${p.rowIndex}, 1)">
+          CUT +1
+        </button>
+      </div>
+    </div>
+  </div>
+`;
+
+    }).join("");
+  }
+
+  updateCncCutSummary();
+
+  new bootstrap.Modal(document.getElementById("cncCutModal")).show();
+}
+
+function cncCutAdd(rowIndex, inc) {
+  if (!cncCutCtx) return;
+
+  const panels = cncCutCtx.prodData.panels || [];
+  const p = panels.find(x => Number(x.rowIndex) === Number(rowIndex));
+  if (!p) return;
+
+  const req = Number(p.qtyOrder) || 0;
+  const cur = Number(p.qtyCut) || 0;
+
+  // Safety: you can't set Cut below any later stage
+  const minAllowed = Math.max(
+    Number(p.qtyProcessed) || 0,
+    Number(p.qtyEdgeFinish) || 0,
+    Number(p.qtyPacked) || 0
+  );
+
+  let next = cur + (Number(inc) || 0);
+
+  if (next > req) {
+    showStatus("Max reached", true);
+    return;
+  }
+
+  if (next < minAllowed) {
+    showStatus("Blocked: reduce later stages first", true);
+    return;
+  }
+
+  if (next < 0) next = 0;
+
+  // update local model
+  p.qtyCut = next;
+
+  // update UI for that row
+  const cutEl = document.getElementById("cnc-cut-" + rowIndex);
+  const remEl = document.getElementById("cnc-rem-" + rowIndex);
+  if (cutEl) cutEl.innerText = next;
+  if (remEl) remEl.innerText = Math.max(0, req - next);
+
+  updateCncCutSummary();
+
+  // queue save
+  const key = `${rowIndex}-cut`;
+if (!pendingCncCutUpdates[key]) {
+  pendingCncCutUpdates[key] = {
+    rowIndex,
+    colName: "cut",
+    base: cur,
+    delta: 0,
+    opId: makeOpId(),
+    ts: Date.now()
+  };
+}
+pendingCncCutUpdates[key].delta = Number(pendingCncCutUpdates[key].delta || 0) + Number(inc || 0);
+pendingCncCutUpdates[key].ts = Date.now();
+
+showStatus("Saving...", false);
+markUnsaved();
+
+if (cncSaveTimer) clearTimeout(cncSaveTimer);
+cncSaveTimer = setTimeout(sendCncCutQueueToServer, 500);
+
+}
+
+
+function sendCncCutQueueToServer() {
+  if (cncSaveInFlight) {
+    if (cncSaveTimer) clearTimeout(cncSaveTimer);
+    cncSaveTimer = setTimeout(sendCncCutQueueToServer, 300);
+    return;
+  }
+
+  const sending = pendingCncCutUpdates || {};
+  const payload = Object.values(sending);
+
+  if (!payload.length) {
+    clearUnsavedIfEmptyQueues();
+    return;
+  }
+
+  inFlightCncCutUpdates = sending;
+  pendingCncCutUpdates = {};
+
+  cncSaveInFlight = true;
+  showStatus("Saving.", false);
+
+  google.script.run
+    .withSuccessHandler((res) => {
+      cncSaveInFlight = false;
+
+      if (!Array.isArray(res)) {
+        for (const k in inFlightCncCutUpdates) if (!pendingCncCutUpdates[k]) pendingCncCutUpdates[k] = inFlightCncCutUpdates[k];
+        inFlightCncCutUpdates = {};
+        markUnsaved("Not saved: unexpected server response.");
+        showStatus("Not saved", true);
+        return;
+      }
+
+      res.forEach(r => {
+        const key = `${r.rowIndex}-cut`;
+        delete inFlightCncCutUpdates[key];
+
+        if (pendingCncCutUpdates[key]) return; // newer click exists
+
+        const el = document.getElementById(`cnc-cut-${r.rowIndex}`);
+        if (el && r.value !== undefined) el.innerText = r.value;
+
+        const p = cncCutCtx?.prodData?.panels?.find(x => String(x.rowIndex) === String(r.rowIndex));
+        if (p && r.value !== undefined) p.qtyCut = r.value;
+      });
+
+      if (Object.keys(pendingCncCutUpdates).length > 0) {
+        if (cncSaveTimer) clearTimeout(cncSaveTimer);
+        cncSaveTimer = setTimeout(sendCncCutQueueToServer, 0);
+        markUnsaved();
+        return;
+      }
+
+      clearUnsavedIfEmptyQueues();
+      showStatus("Saved", true);
+    })
+    .withFailureHandler((err) => {
+      cncSaveInFlight = false;
+      setHealthBadge(false);
+
+      for (const k in inFlightCncCutUpdates) if (!pendingCncCutUpdates[k]) pendingCncCutUpdates[k] = inFlightCncCutUpdates[k];
+      inFlightCncCutUpdates = {};
+
+      markUnsaved("Not saved (connection/server issue).");
+      showStatus("Not saved", true);
+      console.log("CNC save failed:", err);
+    })
+    .processBatch(payload);
+}
+
+
+
+function switchCncWoodSubTab(tab) {
+  currentCncWoodSubTab = tab;
+
+  document.getElementById('tab-cnc-wood-sheets')?.classList.toggle('active', tab === 'sheets');
+  document.getElementById('tab-cnc-wood-offcuts')?.classList.toggle('active', tab === 'offcuts');
+
+  document.getElementById('wood-stock-list-sheets')?.classList.toggle('hidden', tab !== 'sheets');
+  document.getElementById('wood-stock-list-offcuts')?.classList.toggle('hidden', tab !== 'offcuts');
+}
+
+
+
+  // --- BARCODE SCANNER LISTENER ---
+  let scanBuffer = "";
+  let scanTimer = null;
+
+  document.addEventListener('keydown', (e) => {
+    // 1. If we are typing in a search box, don't interfere (unless it's Enter)
+    const activeTag = document.activeElement.tagName;
+    if (activeTag === 'INPUT' || activeTag === 'TEXTAREA') {
+        if (e.key === 'Enter') {
+            // If the user hit Enter in a search box, they might be scanning into it.
+            // We grab the value, process it, and clear the input.
+            const val = document.activeElement.value.trim();
+            if (val.length > 5) { // Assuming barcodes are long
+                processBarcode(val);
+                document.activeElement.value = ""; 
+                document.activeElement.blur(); // Unfocus
+            }
+        }
+        return; 
+    }
+
+    // 2. Buffer the keystrokes
+    if (e.key === 'Enter') {
+      if (scanBuffer.length > 3) {
+        processBarcode(scanBuffer);
+      }
+      scanBuffer = "";
+    } else {
+      // Ignore control keys (Shift, Ctrl, etc.)
+      if (e.key.length === 1) {
+        scanBuffer += e.key;
+      }
+    }
+
+    // 3. Clear buffer if typing is too slow (manual typing vs scanner speed)
+    if (scanTimer) clearTimeout(scanTimer);
+    scanTimer = setTimeout(() => { scanBuffer = ""; }, 300); // 300ms timeout
+  });
+
+  function processBarcode(scannedId) {
+    showStatus("Scanning...", false);
+    
+    // Clean the scan (some scanners add spaces or special chars)
+    scannedId = scannedId.trim();
+
+    // --- SEARCH ALGORITHM ---
+    // We look for a Panel where: OrderID + "-" + SKU + "-" + PanelName(Safe) === scannedId
+    
+    let found = false;
+
+    // Loop through Orders
+    for (const [ordId, ordData] of Object.entries(rawData)) {
+        
+        // Loop through Products
+        for (const [prodName, prodData] of Object.entries(ordData.products)) {
+            
+            // We need the SKU. 
+            // NOTE: Assuming your rawData tree has SKU. 
+            // If not, we try to reconstruct it or check partial match.
+            // Let's assume the SKU is stored in the product object.
+            // If it's missing, we grab it from the first component or panel row if available.
+            // But for now, let's look at the PANELS.
+
+            if (prodData.panels) {
+                for (const p of prodData.panels) {
+                    
+                    // We reconstruct the ID the same way the Sheet does:
+                    // Sheet Formula: Order + "-" + SKU + "-" + PanelName(with _ for spaces)
+                    
+                    // Note: We need the SKU for this panel.
+                    // In your getDataTree(), ensure 'sku' is passed in the panel object or product object.
+                    // Assuming 'p.sku' exists or 'prodData.sku' exists. 
+                    // Let's try to match strict pattern first.
+                    
+                    // Fallback: If we don't have SKU easily, we can try to match the TAIL of the string.
+                    // Scanned: "1006-CAB600-Side_Panel"
+                    // Target: PanelName = "Side Panel" -> "Side_Panel"
+                    // Order: 1006
+                    
+                    const safeName = p.panelName.replace(/ /g, "_");
+                    
+                    // Check if the Scanned ID *ENDS WITH* "-[SafeName]" AND *STARTS WITH* "[OrderId]-"
+                    // This is safer than guessing the SKU position if we aren't sure of data structure.
+                    
+                    if (scannedId.endsWith("-" + safeName) && scannedId.startsWith(ordId + "-")) {
+                         found = true;
+                         
+                         // 1. Set Context
+                         currentOrder = ordId;
+                         currentProduct = prodName;
+                         
+                         // 2. Set UI Text
+                         document.getElementById('dash-customer').innerText = rawData[ordId].customer;
+                         document.getElementById('manuf-customer').innerText = rawData[ordId].customer;
+                         document.getElementById('fork-product-name').innerText = prodName;
+                         document.getElementById('panel-prod-name').innerText = prodName;
+
+                         // 3. Navigate
+                         showStatus("Found: " + p.panelName, true);
+                         openSinglePanel(p.rowIndex);
+                         return;
+                    }
+                }
+            }
+        }
+    }
+
+    if (!found) {
+        alert("❌ Barcode not found:\n" + scannedId);
+        showStatus("Not Found", true);
+    }
+  }
+
+  function run(fnName, ...args) {
+  return new Promise((resolve, reject) => {
+    google.script.run
+      .withSuccessHandler(resolve)
+      .withFailureHandler(reject)[fnName](...args);
+  });
+}
+
+</script>
