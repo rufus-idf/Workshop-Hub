@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <title>Workshop Hub</title>
+  
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="theme-color" content="#f4f6f8">
+
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  
+  <?!= include('CSS'); ?>
+</head>
+<body>
+
+    <div id="unsaved-banner" class="alert alert-danger py-2 px-3 m-0 rounded-0 hidden" style="position:sticky; top:0; z-index:2000;">
+    <div class="d-flex justify-content-between align-items-center">
+      <div>
+        <strong>Not saved.</strong>
+        <span id="unsaved-msg">Changes are waiting to sync.</span>
+      </div>
+      <button class="btn btn-light btn-sm" onclick="retrySaves()">Retry</button>
+    </div>
+  </div>
+
+
+  <div id="save-status">Saved</div>
+  <div id="breadcrumb-bar" class="breadcrumb-bar"></div>
+
+  <div class="modal fade" id="infoModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><div class="modal-content border-0 shadow"><div class="modal-header border-0 pb-0"><h5 class="modal-title fw-bold" id="modalTitle"></h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body text-secondary" id="modalBody"></div><div class="modal-footer border-0 pt-0"><button type="button" class="btn btn-dark w-100 rounded-pill" data-bs-dismiss="modal">Got it</button></div></div></div></div>
+
+
+  <div class="modal fade" id="assignModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+      <div class="modal-content border-0 shadow" style="height: 80vh;">
+        <div class="modal-header border-0">
+          <h5 class="modal-title fw-bold">Assign Items</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+            <label class="small text-muted mb-1">ROOM NAME / NUMBER</label>
+            <input type="text" id="new-room-name" class="form-control form-control-lg mb-4 fw-bold" placeholder="e.g. Room 101">
+            <h6 class="fw-bold mb-3">Select Items from Bucket</h6>
+            <div id="assign-list"></div>
+        </div>
+        <div class="modal-footer border-0">
+          <button type="button" class="btn btn-dark w-100 rounded-pill py-3 fw-bold" onclick="commitAssignment()">Confirm Move ➔</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="view-jobs">
+    <div class="app-header position-relative d-flex align-items-center justify-content-between" style="min-height: 60px; padding-bottom: 10px;">
+      
+      <img src="https://i-designfurniture.com/wp-content/uploads/2018/04/image.png" alt="Logo" style="height: 80px; width: auto; object-fit: contain;">
+
+      <div class="text-center position-absolute start-50 translate-middle-x">
+        <h2 class="mb-0" style="white-space: nowrap;">
+          Workshop<span style="color:var(--color-cut)">Hub</span>
+        </h2>
+        <div class="d-flex gap-2 justify-content-center mt-2 flex-wrap">
+  <button class="btn btn-sm btn-outline-dark rounded-pill px-3" onclick="openStockLists()">📦 Stock Lists</button>
+  <button class="btn btn-sm btn-outline-dark rounded-pill px-3" onclick="reloadAllData()">↻ Refresh</button>
+  <button class="btn btn-sm btn-outline-dark rounded-pill px-3 position-relative" onclick="openShopifyOrders()">
+    🛒 Orders
+    <span id="order-badge" class="position-absolute top-0 start-100 translate-middle p-1 bg-danger border border-light rounded-circle hidden">
+      <span class="visually-hidden">New alerts</span>
+    </span>
+  </button>
+</div>
+      </div>
+
+      <span class="badge bg-white text-dark shadow-sm py-2 px-3 rounded-pill" id="date-badge">Today</span>
+      <span id="health-badge" class="badge bg-success ms-2" title="Server status">Online</span>
+      
+    </div>
+
+    <ul class="nav-segment mt-3">
+      <a class="nav-link" id="tab-stock" onclick="switchTab('stock')">Stock Builds</a>
+      <a class="nav-link active" id="tab-active" onclick="switchTab('active')">Client Jobs</a>
+      <a class="nav-link" id="tab-history" onclick="switchTab('history')">History</a>
+    </ul>
+    <div id="job-list"></div>
+    <div id="loading" class="text-center mt-5"><div class="spinner-border text-secondary"></div></div>
+  </div>
+
+  <div id="view-dashboard" class="hidden">
+    <div class="d-flex align-items-center sticky-top-bar">
+      <button class="btn btn-light rounded-circle shadow-sm me-3" style="width:45px; height:45px;" onclick="showView('view-jobs')">🡐</button>
+      <div><h6 class="text-muted small mb-0">PROJECT</h6><h4 class="mb-0" id="dash-customer"></h4></div>
+       <div class="breadcrumb-slot"></div>
+    </div>
+    <div class="menu-choice-btn choice-manuf" onclick="openManufacturing()"><span>🏭 Manufacturing</span><small>Cut, Process, Pack</small></div>
+    <div id="btn-dash-deliv" class="menu-choice-btn choice-deliv" onclick="openDelivery()"><span>🚛 Delivery & Fitting</span><small>Bucket, Rooms, Status</small></div>
+    <div class="menu-choice-btn choice-cnc" onclick="openCNCView()"><span>🪚 CNC Station</span><small>Load Sheets, Cut Panels</small></div>
+  </div>
+
+  <div id="view-manuf-list" class="hidden">
+    <div class="d-flex align-items-center sticky-top-bar">
+      <button class="btn btn-light rounded-circle shadow-sm me-3" style="width:45px; height:45px;" onclick="showView('view-dashboard')">🡐</button>
+      <div><h6 class="text-muted small mb-0">MANUFACTURING</h6><h4 class="mb-0" id="manuf-customer"></h4></div>
+    </div>
+    <div id="product-list"></div>
+  </div>
+
+  <div id="view-delivery" class="hidden">
+  <div class="d-flex align-items-center sticky-top-bar">
+    <button class="btn btn-light rounded-circle shadow-sm me-3" style="width:45px; height:45px;" onclick="showView('view-dashboard')">🡐</button>
+    <div><h6 class="text-muted small mb-0">LOGISTICS</h6><h4 class="mb-0" id="deliv-customer"></h4></div>
+  </div>
+
+
+    <!-- ✅ PER-PRODUCT SUMMARY TABLE -->
+  <div class="card p-0 border-0 shadow-sm mb-3" id="deliv-prod-summary-card">
+    <div class="px-3 pt-3">
+      <div class="small text-muted">PER PRODUCT</div>
+    </div>
+
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0 align-middle">
+        <thead class="bg-light">
+          <tr>
+            <th class="ps-3 text-secondary small">Product</th>
+            <th class="text-center text-secondary small" style="width:18%;">Req</th>
+            <th class="text-center text-secondary small" style="width:18%;">Ready</th>
+            <th class="text-center text-secondary small" style="width:18%;">On site</th>
+            <th class="text-center text-secondary small" style="width:18%;">Avail</th>
+          </tr>
+        </thead>
+        <tbody id="deliv-prod-summary-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <ul class="nav-segment mb-3">
+    <a class="nav-link active" id="tab-bucket" onclick="switchDelivTab('bucket')">🪣 Bucket</a>
+    <a class="nav-link" id="tab-rooms" onclick="switchDelivTab('rooms')">🏢 Rooms</a>
+  </ul>
+
+  <div id="deliv-bucket-view">
+    <div class="card p-3 bg-white border-0 shadow-sm mb-3">
+      <small class="text-muted">UNASSIGNED STOCK</small>
+      <div id="bucket-list" class="mt-2"></div>
+    </div>
+  </div>
+
+  <div id="deliv-rooms-view" class="hidden">
+    <div id="rooms-list"></div>
+    <div class="fab" onclick="openAssignModal()">+</div>
+  </div>
+</div>
+
+
+
+  <div id="view-fork" class="hidden">
+    <div class="d-flex align-items-center sticky-top-bar">
+      <button class="btn btn-light rounded-circle shadow-sm me-3" style="width:45px; height:45px;" onclick="showView('view-manuf-list')">🡐</button>
+      <div><h6 class="text-muted small mb-0">SELECT AREA</h6><h4 class="mb-0" id="fork-product-name"></h4></div>
+    </div>
+    <div class="menu-choice-btn choice-panels" onclick="openPanels()"><span>🪵 Panels</span><small>Cut, Edge, Drill</small></div>
+    <div class="menu-choice-btn choice-comps" onclick="openComponents()"><span>🔩 Components</span><small>Hardware & Fittings</small></div>
+  </div>
+
+  <div id="view-panels" class="hidden">
+    <div class="d-flex align-items-center sticky-top-bar" style="top: 0;">
+      <button class="btn btn-light rounded-circle shadow-sm me-3" style="width:45px; height:45px;" onclick="showView('view-fork')">🡐</button>
+      <div><h6 class="text-muted small mb-0">PANELS</h6><h4 class="mb-0" id="panel-prod-name"></h4></div>
+    </div>
+
+    <div class="sticky-top-bar" style="top: 80px; z-index: 89; margin-bottom: 15px; padding-top: 0;">
+        <input type="text" id="search-panels" class="form-control rounded-pill shadow-sm border-0" style="height: 50px;" placeholder="🔍 Search panels..." onkeyup="filterList('search-panels', 'panel-row-menu')">
+    </div>
+
+    <div id="panel-list" style="margin-top: 10px;"></div>
+  </div>
+
+  <div id="view-single-panel" class="hidden">
+    <div class="d-flex align-items-center sticky-top-bar" style="top: 0;">
+      <button class="btn btn-light rounded-circle shadow-sm me-3" style="width:45px; height:45px;" onclick="openPanels()">🡐</button>
+      <div><h6 class="text-muted small mb-0" id="single-panel-sku">SKU</h6><h4 class="mb-0" id="single-panel-name">Panel Name</h4></div>
+    </div>
+    
+    <div id="single-panel-controls" class="card p-3 mt-3 shadow-sm border-0"></div>
+  </div>
+
+  <div id="view-comps" class="hidden">
+    <div class="d-flex align-items-center sticky-top-bar" style="top: 0;">
+      <button class="btn btn-light rounded-circle shadow-sm me-3" style="width:45px; height:45px;" onclick="showView('view-fork')">🡐</button>
+      <div><h6 class="text-muted small mb-0">COMPONENTS</h6><h4 class="mb-0" id="comp-prod-name"></h4></div>
+    </div>
+
+    <div class="sticky-top-bar" style="top: 80px; z-index: 89; margin-bottom: 15px; padding-top: 0;">
+        <input type="text" id="search-comps" class="form-control rounded-pill shadow-sm border-0" style="height: 50px;" placeholder="🔍 Search components..." onkeyup="filterList('search-comps', 'comp-row')">
+    </div>
+
+    <div id="comp-list" class="card" style="margin-top: 10px;"></div>
+  </div>
+
+  <div id="view-cnc" class="hidden">
+    <div class="d-flex align-items-center sticky-top-bar">
+      <button class="btn btn-light rounded-circle shadow-sm me-3" style="width:45px; height:45px;" onclick="showView('view-dashboard')">🡐</button>
+      <div><h6 class="text-muted small mb-0">STATION</h6><h4 class="mb-0">CNC Operator</h4></div>
+    </div>
+
+    <div class="px-3 pt-2 pb-2 bg-light border-bottom">
+        <select id="cnc-job-filter" class="form-select shadow-sm" onchange="filterStockByJob()">
+            <option value="">Loading...</option>
+        </select>
+    </div>
+
+    <div id="cnc-load-view">
+  <div class="alert alert-info border-0 shadow-sm mb-3">
+    <small>Select material to deduct from stock:</small>
+  </div>
+
+  <!-- (keep your banner slot if you’re using it) -->
+  <div id="cnc-filter-banner-slot"></div>
+
+  <!-- (keep your CNC wood sub tabs if you added them) -->
+  <ul class="nav-segment mb-3" style="margin-top:10px;">
+    <a class="nav-link active" id="tab-cnc-wood-sheets" onclick="switchCncWoodSubTab('sheets')">📦 Full Sheets</a>
+    <a class="nav-link" id="tab-cnc-wood-offcuts" onclick="switchCncWoodSubTab('offcuts')">🪵 Offcuts</a>
+  </ul>
+
+  <div id="wood-stock-list-sheets"></div>
+  <div id="wood-stock-list-offcuts" class="hidden"></div>
+</div>
+
+</div> <!-- END view-cnc -->
+
+<div id="view-stocklists" class="hidden">
+
+
+  <div class="d-flex align-items-center sticky-top-bar">
+    <button class="btn btn-light rounded-circle shadow-sm me-3" style="width:45px; height:45px;" onclick="showView('view-jobs')">🡐</button>
+    <div>
+      <h6 class="text-muted small mb-0">INVENTORY</h6>
+      <h4 class="mb-0">Stock Lists</h4>
+    </div>
+  </div>
+
+  <ul class="nav-segment mb-3">
+    <a class="nav-link active" id="tab-stock-wood" onclick="switchStockTab('wood')">🪵 Wood</a>
+    <a class="nav-link" id="tab-stock-comp" onclick="switchStockTab('comp')">🔩 Components</a>
+    <a class="nav-link" id="tab-stock-edge" onclick="switchStockTab('edge')">🧵 Edge</a>
+    <a class="nav-link" id="tab-stock-furn" onclick="switchStockTab('furn')">🛏️ Furniture</a>
+  </ul>
+
+  <!-- WOOD -->
+  <div id="stock-pane-wood">
+    <div class="sticky-top-bar" style="top: 80px; z-index: 89; margin-bottom: 15px; padding-top:0;">
+      <input type="text" id="search-wood" class="form-control rounded-pill shadow-sm border-0" style="height: 50px;" placeholder="🔍 Search material..." onkeyup="filterList('search-wood', 'wood-row')">
+    </div>
+    <!-- Wood Sub Tabs -->
+<ul class="nav-segment mb-3" style="margin-top:10px;">
+  <a class="nav-link active" id="tab-wood-instock" onclick="switchWoodSubTab('instock')">📦 Full Sheets</a>
+  <a class="nav-link" id="tab-wood-onorder" onclick="switchWoodSubTab('onorder')">🧾 On Order</a>
+  <a class="nav-link" id="tab-wood-offcuts" onclick="switchWoodSubTab('offcuts')">🪵 Offcuts</a>
+</ul>
+
+<!-- 3 tables (same format) -->
+<div id="stock-wood-instock-list" class="pb-5"></div>
+<div id="stock-wood-onorder-list" class="pb-5 hidden"></div>
+<div id="stock-wood-offcuts-list" class="pb-5 hidden"></div>
+
+  </div>
+
+  <!-- COMPONENTS -->
+  <div id="stock-pane-comp" class="hidden">
+    <div class="sticky-top-bar" style="top: 80px; z-index: 89; margin-bottom: 15px; padding-top:0;">
+      <input type="text" id="search-stock" class="form-control rounded-pill shadow-sm border-0" style="height: 50px;" placeholder="🔍 Search screws, hinges..." onkeyup="filterList('search-stock', 'stock-row')">
+    </div>
+    <div id="stock-comp-list" class="pb-5"></div>
+  </div>
+
+  <!-- EDGEBANDING -->
+  <div id="stock-pane-edge" class="hidden">
+    <div class="sticky-top-bar" style="top: 80px; z-index: 89; margin-bottom: 15px; padding-top:0;">
+      <input type="text" id="search-edge" class="form-control rounded-pill shadow-sm border-0" style="height: 50px;" placeholder="🔍 Search edgebanding..." onkeyup="filterList('search-edge', 'edge-row')">
+    </div>
+    <ul class="nav-segment mb-3" style="margin-top:10px;">
+  <a class="nav-link active" id="tab-edge-instock" onclick="switchEdgeSubTab('instock')">🧵 Full Rolls</a>
+  <a class="nav-link" id="tab-edge-onorder" onclick="switchEdgeSubTab('onorder')">🧾 On Order</a>
+</ul>
+
+<div id="stock-edge-instock-list" class="pb-5"></div>
+<div id="stock-edge-onorder-list" class="pb-5 hidden"></div>
+
+  </div>
+
+  <!-- FURNITURE -->
+  <div id="stock-pane-furn" class="hidden">
+    <div class="p-3">
+      <input type="text" id="furn-search" class="form-control mb-3" placeholder="Search customer or product..." onkeyup="filterList('furn-search', 'furn-row')">
+
+      <div class="card border-0 shadow-sm overflow-hidden">
+        <table class="table table-hover mb-0 align-middle">
+          <thead class="bg-light">
+            <tr>
+              <th class="ps-3 text-secondary small" style="width:30%">Customer</th>
+              <th class="text-secondary small">Product / SKU</th>
+              <th class="text-center text-secondary small" style="width:20%">Qty</th>
+              <th class="text-end pe-3" style="width:10%"></th>
+            </tr>
+          </thead>
+          <tbody id="furniture-list"></tbody>
+        </table>
+      </div>
+
+      <div id="furniture-loading" class="text-center mt-4">Loading...</div>
+    </div>
+  </div>
+
+</div>
+
+  <?!= include('JS'); ?>
+
+  <div class="modal fade" id="allocateModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+      <div class="modal-content border-0 shadow">
+        
+        <div class="modal-header border-0 pb-0">
+          <div>
+            <h5 class="modal-title fw-bold">Allocate Material</h5>
+            <small class="text-muted" id="alloc-material-name">Material Name</small>
+          </div>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+
+        <div class="modal-body">
+            <input type="hidden" id="alloc-row-index">
+
+            <label class="small fw-bold text-muted mb-1">1. ASSIGN TO PROJECT</label>
+            <select id="alloc-project-select" class="form-select mb-3" onchange="populateAllocProducts()">
+                <option value="">-- Select Active Job --</option>
+            </select>
+
+            <div id="alloc-prod-wrapper" class="hidden">
+                <label class="small fw-bold text-muted mb-1">2. SELECT PRODUCT</label>
+                <select id="alloc-product-select" class="form-select mb-3"></select>
+            </div>
+
+            <label class="small fw-bold text-muted mb-1">3. QUANTITY TO USE</label>
+            <div class="d-flex align-items-center mb-4">
+                <button class="btn btn-outline-secondary" onclick="stepAllocQty(-1)">−</button>
+                <input type="number" id="alloc-qty" class="form-control text-center mx-2 fw-bold" value="1" style="max-width:80px;">
+                <button class="btn btn-outline-secondary" onclick="stepAllocQty(1)">+</button>
+            </div>
+
+            <hr>
+
+            <div class="form-check form-switch mb-3">
+                <input class="form-check-input" type="checkbox" id="alloc-log-offcut" onchange="toggleOffcutFields()">
+                <label class="form-check-label fw-bold" for="alloc-log-offcut">Generate Offcut?</label>
+            </div>
+
+            <div id="alloc-offcut-fields" class="hidden bg-light p-3 rounded">
+                <div class="row g-2">
+                    <div class="col-6">
+                        <small>Length (mm)</small>
+                        <input type="number" id="off-len" class="form-control" placeholder="L">
+                    </div>
+                    <div class="col-6">
+                        <small>Width (mm)</small>
+                        <input type="number" id="off-wid" class="form-control" placeholder="W">
+                    </div>
+                    <div class="col-12 mt-2">
+                        <small>Quantity Created</small>
+                        <input type="number" id="off-qty" class="form-control" value="1">
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <div class="modal-footer border-0">
+          <button type="button" class="btn btn-dark w-100 py-3 rounded-pill fw-bold" onclick="confirmAllocation()">
+            Confirm Allocation ➔
+          </button>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- CNC Cut Sheet Modal -->
+<div class="modal fade" id="cncCutModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header border-0 pb-0">
+        <div>
+          <h5 class="modal-title fw-bold">Which panels are you cutting?</h5>
+          <small class="text-muted" id="cncCutTitle">...</small>
+          <div class="small text-muted mt-1" id="cncCutSummary"></div>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+
+      <div class="modal-body" id="cncCutList">
+        Loading...
+      </div>
+
+      <div class="modal-footer border-0 pt-0">
+        <button type="button" class="btn btn-light w-100 rounded-pill" data-bs-dismiss="modal">Done</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+  <div class="modal fade" id="historyModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+      <div class="modal-content border-0 shadow">
+        <div class="modal-header border-0">
+          <div><h5 class="modal-title fw-bold">Stock History</h5><small class="text-muted" id="hist-material-title">...</small></div>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body p-0">
+            <div id="history-loading" class="text-center py-4"><div class="spinner-border text-secondary"></div></div>
+            <table class="table table-striped mb-0" style="font-size:0.9rem;">
+                <tbody id="history-table-body"></tbody>
+            </table>
+        </div>
+        <div class="modal-footer border-0 p-2"><button type="button" class="btn btn-sm btn-light w-100" data-bs-dismiss="modal">Close</button></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal fade" id="receiveModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header border-0 pb-0">
+        <h5 class="modal-title fw-bold">Receive from Order</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+
+      <div class="modal-body">
+        <input type="hidden" id="recv-type">
+        <input type="hidden" id="recv-row-index">
+
+        <div class="bg-light rounded p-3 mb-3">
+          <div class="small text-muted">ITEM</div>
+          <div class="fw-bold" id="recv-item-label">...</div>
+          <div class="small text-muted mt-1">On order: <span class="fw-bold" id="recv-onorder">0</span></div>
+        </div>
+
+        <label class="small fw-bold text-muted mb-1">QUANTITY TO RECEIVE</label>
+        <input type="number" id="recv-qty" class="form-control form-control-lg fw-bold" placeholder="e.g. 20">
+        <div class="form-text text-muted mt-2">This will move from On Order → In Stock.</div>
+      </div>
+
+      <div class="modal-footer border-0 pt-0">
+        <button type="button" class="btn btn-dark w-100 py-3 rounded-pill fw-bold" onclick="commitReceive()">
+          Confirm Receive
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+  <div class="modal fade" id="adjustStockModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content border-0 shadow">
+        
+        <div class="modal-header border-0 pb-0">
+          <h5 class="modal-title fw-bold">Update Stock Level</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+
+        <div class="modal-body">
+            <input type="hidden" id="adj-row-index">
+<input type="hidden" id="adj-type">
+
+<div class="bg-light rounded p-3 mb-3">
+  <div class="small text-muted">ITEM</div>
+  <div class="fw-bold" id="adj-item-label">...</div>
+  <div class="small text-muted mt-1">In stock: <span class="fw-bold" id="adj-current-stock">0</span></div>
+  <div class="small text-muted" id="adj-onorder-row">On order: <span class="fw-bold" id="adj-onorder-stock">0</span></div>
+</div>
+
+<div class="mb-3" id="adj-target-wrapper">
+  <label class="small fw-bold text-muted mb-1">ADJUST WHICH?</label>
+  <select id="adj-target" class="form-select form-select-lg">
+    <option value="stock" selected>In Stock</option>
+    <option value="onorder">On Order</option>
+  </select>
+</div>
+
+
+            
+            <label class="small fw-bold text-muted mb-1">CHANGE QUANTITY</label>
+            <div class="input-group mb-3">
+                <input type="number" id="adj-qty" class="form-control form-control-lg fw-bold" placeholder="+10 or -5">
+            </div>
+            <div class="form-text text-muted mb-3">Use <strong>negative</strong> numbers to remove stock.</div>
+
+            <label class="small fw-bold text-muted mb-1">REASON</label>
+            <select id="adj-reason" class="form-select form-select-lg mb-2" onchange="toggleAdjOtherField()">
+                <option value="" selected disabled>Select a reason...</option>
+                <option value="Restock / Delivery">🚛 Restock / Delivery</option>
+                <option value="Stock Correction">📊 Stock Correction</option>
+                <option value="Damaged">⚠️ Damaged</option>
+                <option value="Other">🖊️ Other...</option>
+            </select>
+
+            <div id="adj-other-wrapper" class="hidden">
+                <input type="text" id="adj-reason-manual" class="form-control" placeholder="Please type the reason here...">
+            </div>
+        </div>
+
+        <div class="modal-footer border-0 pt-0">
+          <button type="button" class="btn btn-dark w-100 py-3 rounded-pill fw-bold" onclick="commitAdjustment()">
+            Confirm Update
+          </button>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- Manufacturing Gate Check Modal -->
+<div class="modal fade" id="gateModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header border-0 pb-0">
+        <div>
+          <h5 class="modal-title fw-bold">Manufacturing Gate Check</h5>
+          <small class="text-muted" id="gateTitle">...</small>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+
+      <div class="modal-body" id="gateBody">
+        Loading...
+      </div>
+
+      <div class="modal-footer border-0 pt-0">
+        <button type="button" class="btn btn-light w-100 rounded-pill" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="shopifyOrdersModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable modal-fullscreen-md-down">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header border-0 pb-0">
+        <div>
+          <h5 class="modal-title fw-bold">Incoming Orders</h5>
+          <small class="text-muted">Matches Product Code (SKU) against Finished Goods</small>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+
+      <div class="modal-body" id="shopify-orders-list">
+        Loading...
+      </div>
+
+      <div class="modal-footer border-0 pt-0">
+        <button type="button" class="btn btn-light w-100 rounded-pill" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+  
+</body>
+</html>
