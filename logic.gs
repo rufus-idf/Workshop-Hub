@@ -216,6 +216,7 @@ function processBatch(updates) {
   try {
     // 2. APPLY UPDATES
     const results = []; // Return list for frontend
+    const packedTargets = new Map();
     updates.sort((a, b) => (a.ts || 0) - (b.ts || 0));
 
     updates.forEach(item => {
@@ -256,11 +257,19 @@ function processBatch(updates) {
 
         // 3. TRIGGER SYNC (If Packed)
         if (colName === 'packed') {
-           const rowData = sheet.getRange(rowIndex, 1, 1, 3).getValues()[0];
-           checkProductCompletion(rowData[0], rowData[2]);
+          const rowData = sheet.getRange(rowIndex, 1, 1, 3).getValues()[0];
+          const orderId = rowData[0];
+          const productName = rowData[2];
+          const key = `${String(orderId)}||${String(productName)}`;
+          packedTargets.set(key, { orderId, productName });
         }
       }
     });
+
+    if (packedTargets.size > 0) {
+      const data = sheet.getDataRange().getValues();
+      syncProductCompletions_(data, Array.from(packedTargets.values()));
+    }
 
     return results; // Return the ARRAY
 
@@ -1386,6 +1395,64 @@ function checkProductCompletion(orderId, productName) {
   syncToFinishedGoods(targetCustomer, targetSKU, realProdName, totalFinished);
 }
 
+function syncProductCompletions_(data, targets) {
+  if (!Array.isArray(data) || data.length < 2) return;
+  if (!Array.isArray(targets) || targets.length === 0) return;
+
+  const norm = (v) => String(v ?? "").replace(/\u00A0/g, " ").trim().toLowerCase();
+  const orderProductMap = {};
+  const panelTotalsByCustomerSku = {};
+
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    const orderId = norm(row[0]);
+    const customer = norm(row[1]);
+    const productName = norm(row[2]);
+    const sku = norm(row[3]);
+    const panelName = String(row[4] || "");
+    const qtyPerUnit = Number(row[6]) || 1;
+    const qtyPacked = Number(row[15]) || 0;
+
+    if (orderId && productName) {
+      orderProductMap[`${orderId}||${productName}`] = {
+        customer,
+        sku,
+        productName: row[2]
+      };
+    }
+
+    if (customer && sku && panelName) {
+      const key = `${customer}||${sku}`;
+      if (!panelTotalsByCustomerSku[key]) panelTotalsByCustomerSku[key] = {};
+      if (!panelTotalsByCustomerSku[key][panelName]) {
+        panelTotalsByCustomerSku[key][panelName] = { packed: 0, required: qtyPerUnit };
+      }
+      panelTotalsByCustomerSku[key][panelName].packed += qtyPacked;
+    }
+  }
+
+  targets.forEach(({ orderId, productName }) => {
+    const key = `${norm(orderId)}||${norm(productName)}`;
+    const meta = orderProductMap[key];
+    if (!meta || meta.customer !== "workshop stock" || !meta.sku) return;
+
+    const panelTotals = panelTotalsByCustomerSku[`${meta.customer}||${meta.sku}`];
+    if (!panelTotals) return;
+
+    let totalFinished = Infinity;
+    let hasPanels = false;
+    Object.keys(panelTotals).forEach((panelKey) => {
+      hasPanels = true;
+      const p = panelTotals[panelKey];
+      const sets = Math.floor((Number(p.packed) || 0) / (Number(p.required) || 1));
+      if (sets < totalFinished) totalFinished = sets;
+    });
+
+    if (!hasPanels || totalFinished === Infinity) totalFinished = 0;
+    syncToFinishedGoods(meta.customer, meta.sku, meta.productName, totalFinished);
+  });
+}
+
 function syncToFinishedGoods(customer, sku, productName, newManufacturedTotal) {
   const sheet = _getFurnitureStockSheet_(true);
 
@@ -1582,4 +1649,3 @@ function getColumnMap(sheet) {
   });
   return map;
 }
-
