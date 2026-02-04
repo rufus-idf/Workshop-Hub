@@ -2711,8 +2711,13 @@ function renderShopifyOrdersModal(rows) {
                 <span class="badge bg-primary">Allocated ${totalAllocated}</span>
                 <span class="badge bg-warning text-dark">To Build ${totalToBuild}</span>
               </div>
-            </div>
-          </button>
+            </button>
+            <button class="btn btn-outline-dark btn-sm rounded-pill"
+                    type="button"
+                    onclick="openSmartOrder(${jsStr(g.orderId)})">
+              🧠 Smart Order
+            </button>
+          </div>
         </h2>
 
         <div id="${collapseId}" class="accordion-collapse collapse"
