@@ -384,3 +384,4 @@ function hasPendingOrders() {
     return false;
   }
 }
+
