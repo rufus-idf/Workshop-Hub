@@ -259,10 +259,14 @@ function getRequiredUnits(prodData, deliveryTotal) {
 
   // Fallback for Workshop Stock (no delivery rows)
   if (prodData && prodData.panels && prodData.panels.length) {
-    const p = prodData.panels[0];
-    const per = Number(p.qtyPerUnit) || 1;
-    const qtyOrder = Number(p.qtyOrder) || 0;
-    return per ? Math.round(qtyOrder / per) : 0;
+    let maxUnits = 0;
+    prodData.panels.forEach(p => {
+      const per = Number(p.qtyPerUnit) || 1;
+      const qtyOrder = Number(p.qtyOrder) || 0;
+      const units = per ? Math.round(qtyOrder / per) : 0;
+      if (units > maxUnits) maxUnits = units;
+    });
+    return maxUnits;
   }
 
   return 0;
@@ -507,11 +511,25 @@ function updateBreadcrumbsForView(viewId) {
         orderDelivered += delivered;
 
         // Custom text based on type
-        const lineText = isWorkshop 
-           ? `${required} ${prodName} — ${manufactured} ready`
-           : `${required} ${prodName} — ${manufactured} manufactured — ${delivered} delivered`;
+        const lineText = isWorkshop
+           ? `${required}x ${prodName} — ${manufactured} ready`
+           : `${required}x ${prodName}`;
 
-        lines += `<div class="small text-muted">${lineText}</div>`;
+        if (isWorkshop) {
+          lines += `
+            <div class="d-flex justify-content-between align-items-center mt-1">
+              <div class="fw-semibold">${lineText}</div>
+              <div class="text-muted small">${manufactured} ready</div>
+            </div>
+          `;
+        } else {
+          lines += `
+            <div class="d-flex justify-content-between align-items-center mt-1">
+              <div class="fw-semibold">${lineText}</div>
+              <div class="text-muted small">${manufactured} manufactured • ${delivered} delivered</div>
+            </div>
+          `;
+        }
       }
 
       // 3. Check Completion
@@ -572,7 +590,7 @@ function updateBreadcrumbsForView(viewId) {
 
       } else {
           // --- CLIENT CARD STYLE (Standard) ---
-          const delivPercent = orderRequired > 0 ? Math.round((orderDelivered / orderRequired) * 100) : 0;
+          const manufPercent = orderRequired > 0 ? Math.round((orderManufactured / orderRequired) * 100) : 0;
           const barColor = isComplete ? 'var(--status-fitted)' : 'var(--status-deliv)';
 
           card.onclick = () => openOrder(id); // Goes to Dashboard
@@ -589,7 +607,7 @@ function updateBreadcrumbsForView(viewId) {
             </div>
             ${lines}
             <div class="progress-track mt-2">
-              <div class="progress-fill" style="width:${delivPercent}%; background:${barColor};"></div>
+              <div class="progress-fill" style="width:${manufPercent}%; background:${barColor};"></div>
             </div>
             <div class="small text-muted mt-2">
               ${orderManufactured}/${orderRequired} Manufactured
@@ -1414,7 +1432,8 @@ google.script.run.assignToRoom(currentOrder, safeProd, m.qty, roomName);
       const fin = Number(p.qtyEdgeFinish) || 0;
       const pack = Number(p.qtyPacked) || 0;
 
-      const percent = req > 0 ? Math.round((pack / req) * 100) : 0;
+      const currentStage = Math.max(cut, proc, fin, pack);
+      const percent = req > 0 ? Math.round((currentStage / req) * 100) : 0;
       const isDone = (req > 0 && pack >= req);
 
       const row = document.createElement('div');
