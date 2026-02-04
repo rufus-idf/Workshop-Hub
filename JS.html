@@ -108,6 +108,17 @@ function startHealthMonitor() {
 
 // Normalise strings (kills weird spaces + trims)
 const norm = (v) => String(v ?? "").replace(/\u00A0/g, " ").trim();
+const escHtml = (s) => String(s ?? "")
+  .replace(/&/g, "&amp;")
+  .replace(/</g, "&lt;")
+  .replace(/>/g, "&gt;")
+  .replace(/"/g, "&quot;")
+  .replace(/'/g, "&#39;");
+const fmtNum = (v, digits = 0) => {
+  const num = Number(v) || 0;
+  return num.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits });
+};
+const fmtMaybe = (v, digits = 0) => (v == null ? "-" : fmtNum(v, digits));
 
 
   // DEFINITIONS
@@ -2541,6 +2552,7 @@ function commitReceive() {
 
 let shopifyOrdersModalInst = null;
 let shopifyBusyRows = new Set();
+let smartOrderModalInst = null;
 
 function openShopifyOrders() {
   const modalEl = document.getElementById("shopifyOrdersModal");
@@ -2611,6 +2623,7 @@ function renderShopifyOrdersModal(rows) {
   const esc = (s) => String(s ?? "")
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  const jsStr = (s) => JSON.stringify(String(s ?? ""));
 
   const accordId = "shopify-orders-accordion";
   let html = `<div class="accordion" id="${accordId}">`;
@@ -2680,21 +2693,28 @@ function renderShopifyOrdersModal(rows) {
     html += `
       <div class="accordion-item border-0 mb-2 room-acc">
         <h2 class="accordion-header" id="${headingId}">
-          <button class="accordion-button collapsed room-acc-btn"
-                  type="button"
-                  data-bs-toggle="collapse"
-                  data-bs-target="#${collapseId}"
-                  aria-expanded="false"
-                  aria-controls="${collapseId}">
-            <div class="d-flex w-100 justify-content-between align-items-center">
-              <div class="fw-bold text-dark">${esc(g.customer)} — #${esc(g.orderId)}</div>
-              <div class="d-flex gap-2 flex-wrap justify-content-end">
-                <span class="badge bg-dark">Ordered ${totalOrdered}</span>
-                <span class="badge bg-primary">Allocated ${totalAllocated}</span>
-                <span class="badge bg-warning text-dark">To Build ${totalToBuild}</span>
+          <div class="d-flex align-items-center gap-2">
+            <button class="accordion-button collapsed room-acc-btn flex-grow-1"
+                    type="button"
+                    data-bs-toggle="collapse"
+                    data-bs-target="#${collapseId}"
+                    aria-expanded="false"
+                    aria-controls="${collapseId}">
+              <div class="d-flex w-100 justify-content-between align-items-center flex-wrap gap-2">
+                <div class="fw-bold text-dark">${esc(g.customer)} — #${esc(g.orderId)}</div>
+                <div class="d-flex gap-2 flex-wrap justify-content-end align-items-center">
+                  <span class="badge bg-dark">Ordered ${totalOrdered}</span>
+                  <span class="badge bg-primary">Allocated ${totalAllocated}</span>
+                  <span class="badge bg-warning text-dark">To Build ${totalToBuild}</span>
+                </div>
               </div>
-            </div>
-          </button>
+            </button>
+            <button class="btn btn-outline-dark btn-sm rounded-pill"
+                    type="button"
+                    onclick="openSmartOrder(${jsStr(g.orderId)})">
+              🧠 Smart Order
+            </button>
+          </div>
         </h2>
 
         <div id="${collapseId}" class="accordion-collapse collapse"
@@ -2727,6 +2747,216 @@ function renderShopifyOrdersModal(rows) {
 
   html += `</div>`;
   listEl.innerHTML = html;
+}
+
+function openSmartOrder(orderId) {
+  const modalEl = document.getElementById("smartOrderModal");
+  const bodyEl = document.getElementById("smart-order-body");
+  const titleEl = document.getElementById("smart-order-title");
+
+  if (!modalEl || !bodyEl || !titleEl) {
+    alert("Missing Smart Order modal elements.");
+    return;
+  }
+
+  if (!smartOrderModalInst) {
+    smartOrderModalInst = new bootstrap.Modal(modalEl, { backdrop: true, keyboard: true });
+
+    modalEl.addEventListener("hidden.bs.modal", () => {
+      document.querySelectorAll(".modal-backdrop").forEach(b => b.remove());
+      document.body.classList.remove("modal-open");
+      document.body.style.removeProperty("padding-right");
+    });
+  }
+
+  titleEl.innerText = `Smart Order • #${orderId}`;
+  bodyEl.innerHTML = `<div class="text-center text-muted py-5"><div class="spinner-border"></div></div>`;
+  smartOrderModalInst.show();
+
+  google.script.run
+    .withSuccessHandler(data => {
+      renderSmartOrderModal(data);
+    })
+    .withFailureHandler(err => {
+      bodyEl.innerHTML = `<div class="text-danger">Error: ${err.message}</div>`;
+    })
+    .getSmartOrderSummary(orderId);
+}
+
+function renderSmartOrderModal(data) {
+  const bodyEl = document.getElementById("smart-order-body");
+  const titleEl = document.getElementById("smart-order-title");
+  const subtitleEl = document.getElementById("smart-order-subtitle");
+  if (!bodyEl || !titleEl || !subtitleEl) return;
+
+  if (!data || !data.products || data.products.length === 0) {
+    titleEl.innerText = `Smart Order • #${escHtml(data?.orderId || "")}`;
+    subtitleEl.innerText = data?.customer ? `Customer: ${data.customer}` : "No items pending import.";
+    bodyEl.innerHTML = `<div class="text-center text-muted py-4">No items require manufacturing for this order.</div>`;
+    return;
+  }
+
+  titleEl.innerText = `Smart Order • #${escHtml(data.orderId)}`;
+  subtitleEl.innerText = `${data.customer ? `Customer: ${data.customer}` : "Customer unknown"} • Import to manufacture: ${fmtNum(data.totalToBuild)} units`;
+
+  const totalsHtml = buildSmartOrderSummaryTables(data.totals || {}, data.sheetSizes, data.edgeRollMeters);
+  const productHtml = buildSmartOrderProducts(data.products || [], data.sheetSizes, data.edgeRollMeters);
+
+  bodyEl.innerHTML = `
+    <div class="smart-order-summary mb-4">
+      <div class="small text-muted mb-2">TOTAL ORDER REQUIREMENTS</div>
+      ${totalsHtml}
+    </div>
+    <div class="small text-muted mb-2">PER PRODUCT</div>
+    ${productHtml}
+  `;
+}
+
+function buildSmartOrderSummaryTables(totals, sheetSizes, edgeRollMeters) {
+  const wood = totals.wood || [];
+  const edge = totals.edge || [];
+  const components = totals.components || [];
+
+  return `
+    ${buildWoodTable(wood, sheetSizes)}
+    ${buildEdgeTable(edge, edgeRollMeters)}
+    ${buildComponentsTable(components)}
+  `;
+}
+
+function buildSmartOrderProducts(products, sheetSizes, edgeRollMeters) {
+  const accordId = "smart-order-products";
+  const items = products.map((prod, idx) => {
+    const collapseId = `smart-prod-${idx}`;
+    const headerId = `smart-prod-head-${idx}`;
+    return `
+      <div class="accordion-item border-0 mb-3">
+        <h2 class="accordion-header" id="${headerId}">
+          <button class="accordion-button collapsed smart-order-accordion-btn" type="button"
+                  data-bs-toggle="collapse" data-bs-target="#${collapseId}"
+                  aria-expanded="false" aria-controls="${collapseId}">
+            <div class="d-flex flex-column">
+              <span class="fw-bold">${escHtml(prod.productName || prod.sku)}</span>
+              <span class="text-muted small">SKU ${escHtml(prod.sku)} • Build ${fmtNum(prod.toBuild)}</span>
+            </div>
+          </button>
+        </h2>
+        <div id="${collapseId}" class="accordion-collapse collapse" aria-labelledby="${headerId}" data-bs-parent="#${accordId}">
+          <div class="accordion-body pt-2">
+            ${buildWoodTable(prod.wood || [], sheetSizes)}
+            ${buildEdgeTable(prod.edge || [], edgeRollMeters)}
+            ${buildComponentsTable(prod.components || [])}
+          </div>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  return `<div class="accordion" id="${accordId}">${items}</div>`;
+}
+
+function buildWoodTable(items, sheetSizes) {
+  if (!items.length) {
+    return `<div class="smart-order-empty text-muted">No sheet materials required.</div>`;
+  }
+
+  const rows = items.map(item => {
+    const sheetLabel = item.type === "mdf" ? (sheetSizes?.mdf || "2800 x 2070mm")
+      : item.type === "ply" ? (sheetSizes?.ply || "3050 x 1220mm")
+      : "Unknown sheet";
+    return `
+      <tr>
+        <td class="fw-semibold">${escHtml(item.material)}</td>
+        <td>${escHtml(sheetLabel)}</td>
+        <td class="text-end">${fmtNum(item.area, 2)} m²</td>
+        <td class="text-end">${fmtNum(item.sheetsNeeded)}</td>
+        <td class="text-end">${fmtNum(item.stockSheets)}</td>
+        <td class="text-end ${item.shortSheets > 0 ? "text-danger fw-semibold" : "text-success fw-semibold"}">${fmtNum(item.shortSheets)}</td>
+      </tr>
+    `;
+  }).join("");
+
+  return `
+    <div class="table-responsive bg-white rounded shadow-sm border mb-3">
+      <table class="table table-sm align-middle mb-0 smart-order-table">
+        <thead class="bg-light">
+          <tr class="text-secondary small">
+            <th>Material</th>
+            <th>Sheet Size</th>
+            <th class="text-end">Area</th>
+            <th class="text-end">Sheets Req</th>
+            <th class="text-end">In Stock</th>
+            <th class="text-end">Needed</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function buildEdgeTable(items, edgeRollMeters) {
+  if (!items.length) {
+    return `<div class="smart-order-empty text-muted">No edgebanding required.</div>`;
+  }
+
+  const rows = items.map(item => `
+    <tr>
+      <td class="fw-semibold">${escHtml(item.material)}</td>
+      <td class="text-end">${fmtNum(item.meters, 2)} m</td>
+      <td class="text-end">${fmtNum(item.rollsNeeded)}</td>
+      <td class="text-end">${fmtNum(item.stockRolls)}</td>
+      <td class="text-end ${item.shortRolls > 0 ? "text-danger fw-semibold" : "text-success fw-semibold"}">${fmtNum(item.shortRolls)}</td>
+    </tr>
+  `).join("");
+
+  return `
+    <div class="table-responsive bg-white rounded shadow-sm border mb-3">
+      <table class="table table-sm align-middle mb-0 smart-order-table">
+        <thead class="bg-light">
+          <tr class="text-secondary small">
+            <th>Edgeband Material</th>
+            <th class="text-end">Meters</th>
+            <th class="text-end">Rolls (${edgeRollMeters || 75}m)</th>
+            <th class="text-end">In Stock</th>
+            <th class="text-end">Needed</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function buildComponentsTable(items) {
+  if (!items.length) {
+    return `<div class="smart-order-empty text-muted">No components required.</div>`;
+  }
+
+  const rows = items.map(item => `
+    <tr>
+      <td class="fw-semibold">${escHtml(item.name)}</td>
+      <td class="text-end">${fmtNum(item.qty)}</td>
+      <td class="text-end">${fmtNum(item.stock)}</td>
+      <td class="text-end ${item.short > 0 ? "text-danger fw-semibold" : "text-success fw-semibold"}">${fmtNum(item.short)}</td>
+    </tr>
+  `).join("");
+
+  return `
+    <div class="table-responsive bg-white rounded shadow-sm border mb-3">
+      <table class="table table-sm align-middle mb-0 smart-order-table">
+        <thead class="bg-light">
+          <tr class="text-secondary small">
+            <th>Component</th>
+            <th class="text-end">Qty Req</th>
+            <th class="text-end">In Stock</th>
+            <th class="text-end">Needed</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
 }
 
 function allocateShopifyLine(shopifyRowIndex, inStock, remainingToAllocate, suggested) {

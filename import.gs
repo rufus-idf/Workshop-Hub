@@ -276,10 +276,39 @@ function importApprovedShopifyRow_(shopifyRowIndex) {
   const rowsForDelivery = [];
 
   let skuFound = false;
-  
-  // --- DEDUPLICATION TRACKERS (The Fix) ---
+  const existingPanelKeys = new Set();
+  const existingCompKeys = new Set();
+  let existingDeliveryCount = 0;
+
+  // --- DEDUPLICATION TRACKERS (Prevent double import) ---
   const seenPanels = new Set();
   const seenComps = new Set();
+
+  const buildKey = (parts) => parts.map(p => String(p ?? "").trim().toLowerCase()).join("|");
+
+  const hubData = hubSheet.getDataRange().getValues();
+  for (let i = 1; i < hubData.length; i++) {
+    const row = hubData[i];
+    if (_normTxt(row[0]) !== orderId) continue;
+    const key = buildKey([row[0], row[2], row[4], row[5], row[7], row[8]]);
+    existingPanelKeys.add(key);
+  }
+
+  const compData = compSheet.getDataRange().getValues();
+  for (let i = 1; i < compData.length; i++) {
+    const row = compData[i];
+    if (_normTxt(row[0]) !== orderId) continue;
+    const key = buildKey([row[0], row[2], row[3], row[4]]);
+    existingCompKeys.add(key);
+  }
+
+  const delivData = delivSheet.getDataRange().getValues();
+  for (let i = 1; i < delivData.length; i++) {
+    const row = delivData[i];
+    if (_normTxt(row[0]) !== orderId) continue;
+    if (_normTxt(row[3]) !== productName) continue;
+    existingDeliveryCount++;
+  }
 
   const productRows = productMap[orderSku] || [];
   productRows.forEach((prodRow) => {
@@ -291,11 +320,14 @@ function importApprovedShopifyRow_(shopifyRowIndex) {
 
     // Unique ID for this part: ItemName + Material + Length + Width
     const partSignature = itemName + "|" + material + "|" + prodRow[7] + "|" + prodRow[8];
+    const panelKey = buildKey([orderId, productName, itemName, prodRow[3], prodRow[4], prodRow[5]]);
+    const compKey = buildKey([orderId, productName, itemName, orderSku]);
 
     if (material.includes("component") || material.includes("hardware")) {
       // IGNORE DUPLICATES
       if (seenComps.has(partSignature)) return;
       seenComps.add(partSignature);
+      if (existingCompKeys.has(compKey)) return;
 
       const prefillComps = Math.min(totalQty, qtyPerUnit * allocatedUnits);
       rowsForComponents.push([
@@ -311,6 +343,7 @@ function importApprovedShopifyRow_(shopifyRowIndex) {
       // IGNORE DUPLICATES
       if (seenPanels.has(partSignature)) return;
       seenPanels.add(partSignature);
+      if (existingPanelKeys.has(panelKey)) return;
 
       const prefillPanels = Math.min(totalQty, qtyPerUnit * allocatedUnits);
       rowsForPanels.push([
@@ -331,7 +364,8 @@ function importApprovedShopifyRow_(shopifyRowIndex) {
   // Delivery rows (only non-workshop)
   const isWorkshop = String(customer).trim().toLowerCase() === "workshop stock";
   if (!isWorkshop) {
-    for (let q = 0; q < orderQty; q++) {
+    const remainingDelivery = Math.max(0, orderQty - existingDeliveryCount);
+    for (let q = 0; q < remainingDelivery; q++) {
       rowsForDelivery.push([orderId, customer, address, productName, "", "Pending", "", ""]);
     }
   }
