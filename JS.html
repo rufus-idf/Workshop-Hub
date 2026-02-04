@@ -2692,8 +2692,8 @@ function renderShopifyOrdersModal(rows) {
 
     html += `
       <div class="accordion-item border-0 mb-2 room-acc">
-        <h2 class="accordion-header" id="${headingId}">
-          <button class="accordion-button collapsed room-acc-btn"
+        <h2 class="accordion-header position-relative" id="${headingId}">
+          <button class="accordion-button collapsed room-acc-btn pe-5"
                   type="button"
                   data-bs-toggle="collapse"
                   data-bs-target="#${collapseId}"
@@ -2702,22 +2702,17 @@ function renderShopifyOrdersModal(rows) {
             <div class="d-flex w-100 justify-content-between align-items-center">
               <div class="fw-bold text-dark">${esc(g.customer)} — #${esc(g.orderId)}</div>
               <div class="d-flex gap-2 flex-wrap justify-content-end align-items-center">
-                <button class="btn btn-outline-dark btn-sm rounded-pill"
-                        type="button"
-                        onclick="openSmartOrder(${jsStr(g.orderId)})">
-                  🧠 Smart Order
-                </button>
                 <span class="badge bg-dark">Ordered ${totalOrdered}</span>
                 <span class="badge bg-primary">Allocated ${totalAllocated}</span>
                 <span class="badge bg-warning text-dark">To Build ${totalToBuild}</span>
               </div>
-            </button>
-            <button class="btn btn-outline-dark btn-sm rounded-pill"
-                    type="button"
-                    onclick="openSmartOrder(${jsStr(g.orderId)})">
-              🧠 Smart Order
-            </button>
-          </div>
+            </div>
+          </button>
+          <button class="btn btn-outline-dark btn-sm rounded-pill position-absolute end-0 top-50 translate-middle-y me-2"
+                  type="button"
+                  onclick="openSmartOrder(${jsStr(g.orderId)})">
+            🧠 Smart Order
+          </button>
         </h2>
 
         <div id="${collapseId}" class="accordion-collapse collapse"
