@@ -1432,8 +1432,9 @@ google.script.run.assignToRoom(currentOrder, safeProd, m.qty, roomName);
       const fin = Number(p.qtyEdgeFinish) || 0;
       const pack = Number(p.qtyPacked) || 0;
 
-      const currentStage = Math.max(cut, proc, fin, pack);
-      const percent = req > 0 ? Math.round((currentStage / req) * 100) : 0;
+      const progressUnits = Math.min(cut, req) + Math.min(proc, req) + Math.min(fin, req) + Math.min(pack, req);
+      const totalUnits = req * 4;
+      const percent = totalUnits > 0 ? Math.round((progressUnits / totalUnits) * 100) : 0;
       const isDone = (req > 0 && pack >= req);
 
       const row = document.createElement('div');
