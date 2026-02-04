@@ -507,11 +507,25 @@ function updateBreadcrumbsForView(viewId) {
         orderDelivered += delivered;
 
         // Custom text based on type
-        const lineText = isWorkshop 
-           ? `${required} ${prodName} — ${manufactured} ready`
-           : `${required} ${prodName} — ${manufactured} manufactured — ${delivered} delivered`;
+        const lineText = isWorkshop
+           ? `${required}x ${prodName} — ${manufactured} ready`
+           : `${required}x ${prodName}`;
 
-        lines += `<div class="small text-muted">${lineText}</div>`;
+        if (isWorkshop) {
+          lines += `
+            <div class="d-flex justify-content-between align-items-center mt-1">
+              <div class="fw-semibold">${lineText}</div>
+              <div class="text-muted small">${manufactured} ready</div>
+            </div>
+          `;
+        } else {
+          lines += `
+            <div class="d-flex justify-content-between align-items-center mt-1">
+              <div class="fw-semibold">${lineText}</div>
+              <div class="text-muted small">${manufactured} manufactured • ${delivered} delivered</div>
+            </div>
+          `;
+        }
       }
 
       // 3. Check Completion
@@ -572,7 +586,7 @@ function updateBreadcrumbsForView(viewId) {
 
       } else {
           // --- CLIENT CARD STYLE (Standard) ---
-          const delivPercent = orderRequired > 0 ? Math.round((orderDelivered / orderRequired) * 100) : 0;
+          const manufPercent = orderRequired > 0 ? Math.round((orderManufactured / orderRequired) * 100) : 0;
           const barColor = isComplete ? 'var(--status-fitted)' : 'var(--status-deliv)';
 
           card.onclick = () => openOrder(id); // Goes to Dashboard
@@ -589,7 +603,7 @@ function updateBreadcrumbsForView(viewId) {
             </div>
             ${lines}
             <div class="progress-track mt-2">
-              <div class="progress-fill" style="width:${delivPercent}%; background:${barColor};"></div>
+              <div class="progress-fill" style="width:${manufPercent}%; background:${barColor};"></div>
             </div>
             <div class="small text-muted mt-2">
               ${orderManufactured}/${orderRequired} Manufactured
