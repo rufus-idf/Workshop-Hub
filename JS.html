@@ -2778,7 +2778,23 @@ function openSmartOrder(orderId) {
       renderSmartOrderModal(data);
     })
     .withFailureHandler(err => {
-      bodyEl.innerHTML = `<div class="text-danger">Error: ${err.message}</div>`;
+      const message = err && err.message ? err.message : "Unknown error.";
+      const lowerMsg = String(message).toLowerCase();
+      const authHint = lowerMsg.includes("authorization") || lowerMsg.includes("authorize")
+        || lowerMsg.includes("access") || lowerMsg.includes("permission")
+        || lowerMsg.includes("oauth");
+      const hintHtml = authHint
+        ? `<div class="alert alert-warning mt-3">
+            <strong>Authorization needed.</strong>
+            This feature reads from external sheets. Please open the Apps Script project,
+            run <code>getSmartOrderSummary</code> once, and complete the Google authorization flow.
+            Also confirm the executing account has access to the Shopify Orders + Product Recipe sheets.
+          </div>`
+        : "";
+      bodyEl.innerHTML = `
+        <div class="text-danger">Error: ${escHtml(message)}</div>
+        ${hintHtml}
+      `;
     })
     .getSmartOrderSummary(orderId);
 }
