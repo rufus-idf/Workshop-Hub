@@ -2231,7 +2231,7 @@ function openStockHistory(type, rowIndex) {
 
   if (type === 'comp') {
     const item = (stockData.components || []).find(x => x.rowIndex === rowIndex);
-    if (item) key = `Component: ${item.sku} | ${item.name}`;
+    if (item) key = item.name;
   }
 
   if (type === 'edge') {

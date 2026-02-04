@@ -1103,7 +1103,8 @@ function adjustComponentStock(rowIndex, change, reason) {
 
   const sku = sheet.getRange(rowIndex, 1).getValue();  // Col A
   const name = sheet.getRange(rowIndex, 2).getValue(); // Col B
-  logStockTransaction(`Component: ${sku} | ${name}`, change, reason);
+  const materialLabel = String(name || "").trim();
+  logStockTransaction(materialLabel || `Component: ${sku} | ${name}`, change, reason);
 
   return newVal;
 
@@ -1355,8 +1356,9 @@ function getMaterialHistory(materialName) {
   // Skip header (i > 0)
   for (let i = data.length - 1; i > 0; i--) {
     const rowMat = String(data[i][3]).trim().toLowerCase(); // Col D (Material)
-    
-    if (rowMat === searchMat) {
+    const isComponentMatch = rowMat.startsWith("component:") && rowMat.includes(`| ${searchMat}`);
+
+    if (rowMat === searchMat || isComponentMatch) {
       // Format Date Server-Side to prevent Frontend Crash
       let dateDisplay = "Unknown Date";
       try {
