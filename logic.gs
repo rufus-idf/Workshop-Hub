@@ -618,6 +618,272 @@ function getPendingShopifyOrdersWithStock() {
   return out;
 }
 
+function _classifyMaterial_(material) {
+  const mat = _normTxt(material).toLowerCase();
+  if (!mat) return "unknown";
+  if (mat.includes("component") || mat.includes("hardware")) return "component";
+  if (mat.endsWith("mdf")) return "mdf";
+  if (mat.endsWith("ply")) return "ply";
+  return "unknown";
+}
+
+function getSmartOrderSummary(orderId) {
+  const targetOrderId = _normTxt(orderId);
+  if (!targetOrderId) throw new Error("Order ID is required.");
+
+  const orderSheet = _getShopifyOrdersSheet();
+  const orderValues = orderSheet.getDataRange().getValues();
+  if (orderValues.length < 2) return { orderId: targetOrderId, products: [], totals: {}, totalToBuild: 0 };
+
+  const headers = orderValues[0].map(h => _normTxt(h).toLowerCase());
+  const hm = _headerMap_(headers);
+
+  const idxOrderId = hm["order id"];
+  const idxCustomer = hm["customer"];
+  const idxProductName = hm["product name"];
+  const idxSku = hm["product code"];
+  const idxQty = hm["quantity ordered"];
+  const idxStatus = hm["import status"];
+
+  if ([idxOrderId, idxCustomer, idxProductName, idxSku, idxQty, idxStatus].some(x => x == null)) {
+    throw new Error("Shopify Orders headers don't match expected names. Check spelling/case.");
+  }
+
+  const orderLines = [];
+  let customerName = "";
+
+  for (let r = 1; r < orderValues.length; r++) {
+    const rowOrderId = _normTxt(orderValues[r][idxOrderId]);
+    if (rowOrderId !== targetOrderId) continue;
+
+    const qtyOrdered = Number(orderValues[r][idxQty]) || 0;
+    const status = _normTxt(orderValues[r][idxStatus]);
+    const allocated = _extractAllocatedFromStatus_(status);
+    const toBuild = Math.max(0, qtyOrdered - allocated);
+
+    if (toBuild <= 0) continue;
+
+    orderLines.push({
+      productName: _normTxt(orderValues[r][idxProductName]),
+      sku: _normTxt(orderValues[r][idxSku]).toUpperCase(),
+      qtyOrdered,
+      allocated,
+      toBuild
+    });
+
+    if (!customerName) customerName = _normTxt(orderValues[r][idxCustomer]);
+  }
+
+  if (orderLines.length === 0) {
+    return { orderId: targetOrderId, customer: customerName, products: [], totals: {}, totalToBuild: 0 };
+  }
+
+  const prodSS = SpreadsheetApp.openById(PRODUCT_RECIPE_SHEET_ID);
+  const productSheet = prodSS.getSheetByName(PRODUCT_RECIPE_TAB_NAME);
+  if (!productSheet) throw new Error("Product recipe tab not found.");
+  const productData = productSheet.getDataRange().getValues();
+  const productMap = {};
+
+  for (let p = 1; p < productData.length; p++) {
+    const sku = _normTxt(productData[p][0]).toUpperCase();
+    if (!sku) continue;
+    if (!productMap[sku]) productMap[sku] = [];
+    productMap[sku].push(productData[p]);
+  }
+
+  const inventory = getInventoryData();
+  const compStockMap = {};
+  const woodStockList = [];
+  const edgeStockList = [];
+
+  (inventory.components || []).forEach(item => {
+    const nameKey = _normTxt(item.name).toLowerCase();
+    if (!nameKey) return;
+    compStockMap[nameKey] = (compStockMap[nameKey] || 0) + (Number(item.stock) || 0);
+  });
+
+  (inventory.wood || []).forEach(item => {
+    const mat = _normTxt(item.material).toLowerCase();
+    if (!mat) return;
+    woodStockList.push({ material: mat, qty: Number(item.qty) || 0 });
+  });
+
+  (inventory.edge || []).forEach(item => {
+    const mat = _normTxt(item.material).toLowerCase();
+    if (!mat) return;
+    edgeStockList.push({ material: mat, rolls: Number(item.rolls) || 0 });
+  });
+
+  const sumMatchingStock = (material, list, field) => {
+    const key = _normTxt(material).toLowerCase();
+    if (!key) return 0;
+    return list.reduce((sum, item) => {
+      if (!item.material) return sum;
+      if (item.material.includes(key) || key.includes(item.material)) {
+        return sum + (Number(item[field]) || 0);
+      }
+      return sum;
+    }, 0);
+  };
+
+  const MDF_SHEET_AREA = 2.8 * 2.07;
+  const PLY_SHEET_AREA = 3.05 * 1.22;
+  const EDGE_ROLL_METERS = 75;
+
+  const totalsCompMap = {};
+  const totalsWoodMap = {};
+  const totalsEdgeMap = {};
+
+  const products = orderLines.map(line => {
+    const recipeRows = productMap[line.sku] || [];
+    const compMap = {};
+    const woodMap = {};
+    const edgeMap = {};
+
+    recipeRows.forEach(row => {
+      const panelName = _normTxt(row[2]);
+      const material = _normTxt(row[3]);
+      const qtyPerUnit = Number(row[6]) || 0;
+      const totalUnits = qtyPerUnit * line.toBuild;
+      if (!totalUnits) return;
+
+      const areaEach = Number(row[7]) || 0;
+      const perimeterEach = Number(row[8]) || 0;
+      const totalArea = areaEach * totalUnits;
+      const totalPerimeter = perimeterEach * totalUnits;
+      const matType = _classifyMaterial_(material);
+      const materialKey = material.toLowerCase();
+
+      if (matType === "component") {
+        if (!compMap[panelName]) compMap[panelName] = { name: panelName, qty: 0 };
+        compMap[panelName].qty += totalUnits;
+        if (!totalsCompMap[panelName]) totalsCompMap[panelName] = { name: panelName, qty: 0 };
+        totalsCompMap[panelName].qty += totalUnits;
+      } else {
+        if (!woodMap[materialKey]) {
+          woodMap[materialKey] = { material, type: matType, area: 0 };
+        }
+        woodMap[materialKey].area += totalArea;
+
+        if (!totalsWoodMap[materialKey]) {
+          totalsWoodMap[materialKey] = { material, type: matType, area: 0 };
+        }
+        totalsWoodMap[materialKey].area += totalArea;
+
+        if (matType === "mdf") {
+          if (!edgeMap[materialKey]) {
+            edgeMap[materialKey] = { material, meters: 0 };
+          }
+          edgeMap[materialKey].meters += totalPerimeter;
+
+          if (!totalsEdgeMap[materialKey]) {
+            totalsEdgeMap[materialKey] = { material, meters: 0 };
+          }
+          totalsEdgeMap[materialKey].meters += totalPerimeter;
+        }
+      }
+    });
+
+    const components = Object.values(compMap).map(item => {
+      const stock = compStockMap[item.name.toLowerCase()] || 0;
+      return {
+        name: item.name,
+        qty: item.qty,
+        stock,
+        short: Math.max(0, item.qty - stock)
+      };
+    });
+
+    const wood = Object.values(woodMap).map(item => {
+      const sheetArea = item.type === "mdf" ? MDF_SHEET_AREA : item.type === "ply" ? PLY_SHEET_AREA : 0;
+      const sheetsNeeded = sheetArea ? Math.ceil(item.area / sheetArea) : 0;
+      const stockSheets = sumMatchingStock(item.material, woodStockList, "qty");
+      return {
+        material: item.material,
+        type: item.type,
+        area: item.area,
+        sheetArea,
+        sheetsNeeded,
+        stockSheets,
+        shortSheets: Math.max(0, sheetsNeeded - stockSheets)
+      };
+    });
+
+    const edge = Object.values(edgeMap).map(item => {
+      const rollsNeeded = Math.ceil(item.meters / EDGE_ROLL_METERS);
+      const stockRolls = sumMatchingStock(item.material, edgeStockList, "rolls");
+      return {
+        material: item.material,
+        meters: item.meters,
+        rollsNeeded,
+        stockRolls,
+        shortRolls: Math.max(0, rollsNeeded - stockRolls)
+      };
+    });
+
+    return {
+      productName: line.productName,
+      sku: line.sku,
+      toBuild: line.toBuild,
+      components,
+      wood,
+      edge
+    };
+  });
+
+  const totals = {
+    components: Object.values(totalsCompMap).map(item => {
+      const stock = compStockMap[item.name.toLowerCase()] || 0;
+      return {
+        name: item.name,
+        qty: item.qty,
+        stock,
+        short: Math.max(0, item.qty - stock)
+      };
+    }),
+    wood: Object.values(totalsWoodMap).map(item => {
+      const sheetArea = item.type === "mdf" ? MDF_SHEET_AREA : item.type === "ply" ? PLY_SHEET_AREA : 0;
+      const sheetsNeeded = sheetArea ? Math.ceil(item.area / sheetArea) : 0;
+      const stockSheets = sumMatchingStock(item.material, woodStockList, "qty");
+      return {
+        material: item.material,
+        type: item.type,
+        area: item.area,
+        sheetArea,
+        sheetsNeeded,
+        stockSheets,
+        shortSheets: Math.max(0, sheetsNeeded - stockSheets)
+      };
+    }),
+    edge: Object.values(totalsEdgeMap).map(item => {
+      const rollsNeeded = Math.ceil(item.meters / EDGE_ROLL_METERS);
+      const stockRolls = sumMatchingStock(item.material, edgeStockList, "rolls");
+      return {
+        material: item.material,
+        meters: item.meters,
+        rollsNeeded,
+        stockRolls,
+        shortRolls: Math.max(0, rollsNeeded - stockRolls)
+      };
+    })
+  };
+
+  const totalToBuild = orderLines.reduce((sum, line) => sum + (Number(line.toBuild) || 0), 0);
+
+  return {
+    orderId: targetOrderId,
+    customer: customerName,
+    products,
+    totals,
+    totalToBuild,
+    sheetSizes: {
+      mdf: "2800 x 2070mm",
+      ply: "3050 x 1220mm"
+    },
+    edgeRollMeters: EDGE_ROLL_METERS
+  };
+}
+
 
 
 function approveShopifyOrder(shopifyRowIndex) {
