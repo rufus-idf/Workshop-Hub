@@ -2231,7 +2231,7 @@ function openStockHistory(type, rowIndex) {
 
   if (type === 'comp') {
     const item = (stockData.components || []).find(x => x.rowIndex === rowIndex);
-    if (item) key = `Component: ${item.sku} | ${item.name}`;
+    if (item) key = item.name;
   }
 
   if (type === 'edge') {
@@ -2989,6 +2989,17 @@ function sendCompQueueToServer() {
           // Re-queue what we attempted if there’s no newer edit already
           if (!pendingCompUpdates[key]) pendingCompUpdates[key] = sending[key];
           markUnsaved("Conflict: someone else updated components. Reload & retry.");
+          return;
+        }
+
+        if (r.outOfStock) {
+          const available = (r.available !== undefined) ? ` Available: ${r.available}.` : "";
+          alert(`Out of stock for this component.${available}`);
+          const el = document.getElementById(`comp-packed-${r.rowIndex}`);
+          if (el && r.current !== undefined) el.value = r.current;
+
+          const c = getCompByRow(r.rowIndex);
+          if (c && r.current !== undefined) c.qtyPacked = r.current;
           return;
         }
 
