@@ -43,6 +43,14 @@ function updateManufactureHub() {
   // --- READ DATA ---
   const allOrderData = orderSheet.getDataRange().getValues(); // Read whole order sheet
   const productData = productSheet.getDataRange().getValues(); // Read whole product sheet
+  const productMap = {};
+  for (let p = 1; p < productData.length; p++) {
+    const prodRow = productData[p];
+    const recipeSku = String(prodRow[0] || "").trim();
+    if (!recipeSku) continue;
+    if (!productMap[recipeSku]) productMap[recipeSku] = [];
+    productMap[recipeSku].push(prodRow);
+  }
 
   let rowsForPanels = [];
   let rowsForComponents = [];
@@ -89,15 +97,11 @@ const allocatedUnits = allocMatch ? (parseInt(allocMatch[1], 10) || 0) : 0;
     const orderQty = orderRow[6];       // Col G
     let skuFound = false;
 
-    // --- SEARCH PRODUCT SHEET ---
-    for (let p = 1; p < productData.length; p++) {
-      const prodRow = productData[p];
-      const recipeSku = String(prodRow[0]).trim(); // Clean recipe SKU too
-
-      // EXACT MATCH CHECK
-      if (recipeSku === orderSku) {
-        skuFound = true;
-        
+    // --- SEARCH PRODUCT MAP ---
+    const productRows = productMap[orderSku] || [];
+    if (productRows.length > 0) {
+      skuFound = true;
+      productRows.forEach((prodRow) => {
         const itemName = prodRow[2];      
         const material = String(prodRow[3]).toLowerCase(); 
         const qtyPerUnit = prodRow[6];    
@@ -134,7 +138,7 @@ rowsForPanels.push([
   "", "", ""
 ]);
         }
-      }
+      });
     }
 
        if (skuFound) {
@@ -259,6 +263,14 @@ function importApprovedShopifyRow_(shopifyRowIndex) {
   const allocatedUnits = _extractAllocatedFromStatus_(status);
 
   const productData = productSheet.getDataRange().getValues();
+  const productMap = {};
+  for (let p = 1; p < productData.length; p++) {
+    const prodRow = productData[p];
+    const recipeSku = String(prodRow[0] || "").trim();
+    if (!recipeSku) continue;
+    if (!productMap[recipeSku]) productMap[recipeSku] = [];
+    productMap[recipeSku].push(prodRow);
+  }
   const rowsForPanels = [];
   const rowsForComponents = [];
   const rowsForDelivery = [];
@@ -269,54 +281,50 @@ function importApprovedShopifyRow_(shopifyRowIndex) {
   const seenPanels = new Set();
   const seenComps = new Set();
 
-  for (let p = 1; p < productData.length; p++) {
-    const prodRow = productData[p];
-    const recipeSku = String(prodRow[0] || "").trim();
+  const productRows = productMap[orderSku] || [];
+  productRows.forEach((prodRow) => {
+    skuFound = true;
+    const itemName = prodRow[2];
+    const material = String(prodRow[3] || "").toLowerCase();
+    const qtyPerUnit = Number(prodRow[6]) || 1;
+    const totalQty = qtyPerUnit * orderQty;
 
-    if (recipeSku === orderSku) {
-      skuFound = true;
-      const itemName = prodRow[2];
-      const material = String(prodRow[3] || "").toLowerCase();
-      const qtyPerUnit = Number(prodRow[6]) || 1;
-      const totalQty = qtyPerUnit * orderQty;
+    // Unique ID for this part: ItemName + Material + Length + Width
+    const partSignature = itemName + "|" + material + "|" + prodRow[7] + "|" + prodRow[8];
 
-      // Unique ID for this part: ItemName + Material + Length + Width
-      const partSignature = itemName + "|" + material + "|" + prodRow[7] + "|" + prodRow[8];
+    if (material.includes("component") || material.includes("hardware")) {
+      // IGNORE DUPLICATES
+      if (seenComps.has(partSignature)) return;
+      seenComps.add(partSignature);
 
-      if (material.includes("component") || material.includes("hardware")) {
-        // IGNORE DUPLICATES
-        if (seenComps.has(partSignature)) continue;
-        seenComps.add(partSignature);
+      const prefillComps = Math.min(totalQty, qtyPerUnit * allocatedUnits);
+      rowsForComponents.push([
+        orderId, customer, productName,
+        itemName,
+        String(orderSku).trim().toUpperCase(),
+        qtyPerUnit,
+        totalQty,
+        prefillComps, // qtyPacked
+        "", ""
+      ]);
+    } else {
+      // IGNORE DUPLICATES
+      if (seenPanels.has(partSignature)) return;
+      seenPanels.add(partSignature);
 
-        const prefillComps = Math.min(totalQty, qtyPerUnit * allocatedUnits);
-        rowsForComponents.push([
-          orderId, customer, productName,
-          itemName,
-          String(orderSku).trim().toUpperCase(),
-          qtyPerUnit,
-          totalQty,
-          prefillComps, // qtyPacked
-          "", ""
-        ]);
-      } else {
-        // IGNORE DUPLICATES
-        if (seenPanels.has(partSignature)) continue;
-        seenPanels.add(partSignature);
-
-        const prefillPanels = Math.min(totalQty, qtyPerUnit * allocatedUnits);
-        rowsForPanels.push([
-          orderId, customer, productName, String(orderSku).trim().toUpperCase(),
-          itemName, prodRow[3], qtyPerUnit, prodRow[4], prodRow[5], prodRow[7], prodRow[8],
-          totalQty,
-          prefillPanels, // cut
-          prefillPanels, // processed
-          prefillPanels, // edge
-          prefillPanels, // packed
-          "", "", ""
-        ]);
-      }
+      const prefillPanels = Math.min(totalQty, qtyPerUnit * allocatedUnits);
+      rowsForPanels.push([
+        orderId, customer, productName, String(orderSku).trim().toUpperCase(),
+        itemName, prodRow[3], qtyPerUnit, prodRow[4], prodRow[5], prodRow[7], prodRow[8],
+        totalQty,
+        prefillPanels, // cut
+        prefillPanels, // processed
+        prefillPanels, // edge
+        prefillPanels, // packed
+        "", "", ""
+      ]);
     }
-  }
+  });
 
   if (!skuFound) throw new Error("SKU not found in product recipe sheet: " + orderSku);
 
@@ -384,4 +392,3 @@ function hasPendingOrders() {
     return false;
   }
 }
-
