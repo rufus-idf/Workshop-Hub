@@ -1,5 +1,37 @@
 const SHOPIFY_ORDERS_SHEET_ID = "1KDDVnIZ5oCruCY4nyKp6XVqwWnL7-N6f-pKAD3xXo_U";
 const SHOPIFY_ORDERS_TAB_NAME = "Sheet1";
+const FURNITURE_STOCK_TAB_NAME = "Furniture Stock";
+const LEGACY_FINISHED_GOODS_TAB_NAME = "Finished Goods";
+
+// Helper: get Furniture Stock sheet (auto-migrates legacy "Finished Goods" -> "Furniture Stock")
+function _getFurnitureStockSheet_(createIfMissing) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  // Prefer new name
+  let sh = ss.getSheetByName(FURNITURE_STOCK_TAB_NAME);
+
+  // Migrate legacy name if needed
+  if (!sh) {
+    const legacy = ss.getSheetByName(LEGACY_FINISHED_GOODS_TAB_NAME);
+    if (legacy) {
+      try {
+        legacy.setName(FURNITURE_STOCK_TAB_NAME);
+        sh = legacy;
+      } catch (e) {
+        // If rename fails (e.g. name already taken), just keep using legacy
+        sh = legacy;
+      }
+    }
+  }
+
+  if (!sh && createIfMissing) {
+    sh = ss.insertSheet(FURNITURE_STOCK_TAB_NAME);
+    sh.appendRow(["Customer Name", "SKU", "Product Name", "Qty Available", "Manufactured Total"]);
+  }
+
+  return sh;
+}
+
 
 
 
@@ -325,106 +357,86 @@ function processComponentBatch(updates) {
 
 // --- FURNITURE STOCK LOGIC ---
 
-function updateFinishedGoodsStock(sku, productName, qtyChange, reason) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sheet = ss.getSheetByName("Finished Goods");
-
-  // Create if missing (correct headers)
-  if (!sheet) {
-    sheet = ss.insertSheet("Finished Goods");
-    sheet.appendRow(["Customer Name", "SKU", "Product Name", "Qty Available", "Manufactured Total"]);
-  }
+function updateFurnitureStock(sku, productName, qtyChange, reason) {
+  const sheet = _getFurnitureStockSheet_(true);
 
   const data = sheet.getDataRange().getValues();
-
   const targetSku = String(sku).trim().toLowerCase();
   let foundRow = -1;
 
-  // SKU is column B now
   for (let i = 1; i < data.length; i++) {
-    const rowSku = String(data[i][1]).trim().toLowerCase();
-    if (rowSku === targetSku) {
-      foundRow = i + 1; // 1-based row index
-      break;
-    }
+    const rowSku = String(data[i][1]).trim().toLowerCase(); // Col B
+    if (rowSku === targetSku) { foundRow = i + 1; break; }
   }
 
-  const n = (v) => Number(v) || 0;
+  const n = v => Number(v) || 0;
   const delta = n(qtyChange);
 
   if (foundRow > 0) {
-    // Qty Available is Col D
-    const currentQty = n(sheet.getRange(foundRow, 4).getValue());
+    const currentQty = n(sheet.getRange(foundRow, 4).getValue()); // Col D
     sheet.getRange(foundRow, 4).setValue(currentQty + delta);
-
-    // keep name fresh (Col C)
     sheet.getRange(foundRow, 3).setValue(productName);
   } else {
-    // New row: treat as workshop stock
     sheet.appendRow(["Workshop Stock", sku, productName, delta, ""]);
   }
 
-  // Log
-  logStockTransaction(`Finished Goods: ${sku}`, delta, reason);
+  // Better history shape (Material = SKU, Source = Furniture Stock)
+  logStockTransaction(String(sku).trim(), delta, reason, "Furniture Stock");
 
   return { success: true, sku, newQtyChange: delta };
 }
 
 
+
 // --- APP VIEW FETCHERS ---
 
 function getFurnitureStock() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName("Finished Goods");
+  const sheet = _getFurnitureStockSheet_(false);
   if (!sheet) return [];
 
   const data = sheet.getDataRange().getValues();
   const stock = [];
 
-  // Skip Header (Start at 1)
   for (let i = 1; i < data.length; i++) {
-    // Only return if Qty > 0
     const qty = Number(data[i][3]) || 0; // Col D
     if (qty > 0) {
       stock.push({
         rowIndex: i + 1,
-        customer: data[i][0], // Col A
-        sku: data[i][1],      // Col B
-        product: data[i][2],  // Col C
-        qty: qty              // Col D
+        customer: data[i][0],
+        sku: data[i][1],
+        product: data[i][2],
+        qty: qty
       });
     }
   }
   return stock;
 }
 
+
 function adjustFurnitureStock(rowIndex, change, reason) {
-
-    const lock = LockService.getScriptLock();
+  const lock = LockService.getScriptLock();
   lock.waitLock(30000);
+
   try {
+    const sheet = _getFurnitureStockSheet_(false);
+    if (!sheet) throw new Error("Furniture Stock tab missing");
 
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName("Finished Goods");
-  if (!sheet) throw new Error("Finished Goods tab missing");
+    const current = sheet.getRange(rowIndex, 4).getValue(); // Col D
+    const newVal = (Number(current) || 0) + Number(change);
+    if (newVal < 0) throw new Error("Stock cannot be negative");
 
-  const current = sheet.getRange(rowIndex, 4).getValue(); // Col D = Qty
-  const newVal = (Number(current) || 0) + Number(change);
+    sheet.getRange(rowIndex, 4).setValue(newVal);
 
-  if (newVal < 0) throw new Error("Stock cannot be negative");
+    const sku = String(sheet.getRange(rowIndex, 2).getValue() || "").trim(); // Col B
+    const prodName = sheet.getRange(rowIndex, 3).getValue(); // Col C
 
-  sheet.getRange(rowIndex, 4).setValue(newVal);
-
-  const prodName = sheet.getRange(rowIndex, 3).getValue(); // Col C = Product Name
-  logStockTransaction("Finished Good: " + prodName, change, reason);
-
-  return "Success";
-
-    } finally {
+    logStockTransaction(sku || String(prodName || "").trim(), change, reason, "Furniture Stock");
+    return "Success";
+  } finally {
     lock.releaseLock();
   }
-
 }
+
 
 function _normTxt(v) {
   return String(v ?? "").replace(/\u00A0/g, " ").trim();
@@ -445,40 +457,31 @@ function _headerMap_(headers) {
 }
 
 function _getFinishedGoodsRowMap_() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sh = ss.getSheetByName("Finished Goods");
-  if (!sh || sh.getLastRow() < 2) return {};
+  const sheet = _getFurnitureStockSheet_(false);
+  if (!sheet || sheet.getLastRow() < 2) return {};
 
-  const data = sh.getDataRange().getValues();
+  const data = sheet.getDataRange().getValues();
   const headers = data[0].map(h => _normTxt(h).toLowerCase());
   const hm = _headerMap_(headers);
 
-  // Expected headers:
-  // Customer Name | SKU | Product Name | Qty Available | Manufactured Total
   const idxCustomer = hm["customer name"];
   const idxSku = hm["sku"];
   const idxAvail = hm["qty available"];
-
   if (idxCustomer == null || idxSku == null || idxAvail == null) return {};
 
-  const map = {}; // skuLower -> { rowIndex, avail, sku, customer }
+  const map = {};
   for (let r = 1; r < data.length; r++) {
     const customer = _normTxt(data[r][idxCustomer]);
     const sku = _normTxt(data[r][idxSku]);
     if (!sku) continue;
-
-    // only Workshop Stock rows count as allocatable supply
     if (customer.toLowerCase() !== "workshop stock") continue;
 
     const avail = Number(data[r][idxAvail]) || 0;
-    map[sku.toLowerCase()] = {
-      rowIndex: r + 1, // sheet row index
-      sku,
-      avail
-    };
+    map[sku.toLowerCase()] = { rowIndex: r + 1, sku, avail };
   }
   return map;
 }
+
 
 function _extractAllocatedFromStatus_(status) {
   const m = String(status || "").match(/ALLOCATED\s+(\d+)\s+FROM\s+STOCK/i);
@@ -1197,12 +1200,12 @@ function receiveEdgeFromOrder(rowIndex, rollsReceived) {
 
 
 // HELPER: Centralized Stock Logging
-function logStockTransaction(material, change, reason) {
+function logStockTransaction(material, change, reason, sourceOverride) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const historySheet = ss.getSheetByName("Stock History");
   if (!historySheet) return;
 
-  // ✅ Ensure header has "Source" column (A-E)
+  // Ensure header has columns: Timestamp, User, Source, Material, Change, Reason
   if (historySheet.getLastRow() === 0) {
     historySheet.appendRow(["Timestamp", "User", "Source", "Material", "Change", "Reason"]);
   } else {
@@ -1216,17 +1219,20 @@ function logStockTransaction(material, change, reason) {
   const user = Session.getActiveUser().getEmail() || "Workshop App";
   const timestamp = new Date();
 
-  // ✅ Detect source from material prefix
-  let source = "Other";
-  const m = String(material || "").toLowerCase();
-  if (m.startsWith("edge:")) source = "Edgebanding";
-   else if (m.startsWith("component:")) source = "Components";
-   else if (m.startsWith("finished goods:") || m.startsWith("finished good:")) source = "Finished Goods";
-   else source = "Wood";
-
+  // Source: explicit override wins, otherwise infer from material prefix
+  let source = String(sourceOverride || "").trim();
+  if (!source) {
+    source = "Other";
+    const m = String(material || "").toLowerCase();
+    if (m.startsWith("edge:")) source = "Edgebanding";
+    else if (m.startsWith("component:")) source = "Components";
+    else if (m.startsWith("furniture stock:") || m.startsWith("finished goods:") || m.startsWith("finished good:")) source = "Furniture Stock";
+    else source = "Wood";
+  }
 
   historySheet.appendRow([timestamp, user, source, material, change, reason]);
 }
+
 
 
 // HELPER: Update Project Summary (Find match and increment, or create new)
@@ -1381,14 +1387,7 @@ function checkProductCompletion(orderId, productName) {
 }
 
 function syncToFinishedGoods(customer, sku, productName, newManufacturedTotal) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sheet = ss.getSheetByName("Finished Goods");
-
-  // Create if missing
-  if (!sheet) {
-    sheet = ss.insertSheet("Finished Goods");
-    sheet.appendRow(["Customer Name", "SKU", "Product Name", "Qty Available", "Manufactured Total"]);
-  }
+  const sheet = _getFurnitureStockSheet_(true);
 
   const data = sheet.getDataRange().getValues();
 
@@ -1405,33 +1404,47 @@ function syncToFinishedGoods(customer, sku, productName, newManufacturedTotal) {
     }
   }
 
-  // Helper to safely read numbers
   const n = (v) => Number(v) || 0;
+  const made = n(newManufacturedTotal);
+
+  // Only log "Completed Manufacture" for Workshop Stock rows
+  const shouldLogCompletion = (targetCust === "workshop stock");
+  const cleanSku = String(sku || "").trim();
 
   if (foundRow > 0) {
-    // Existing row
-    const curAvail = n(sheet.getRange(foundRow, 4).getValue());  // Col D
-    const curMade  = n(sheet.getRange(foundRow, 5).getValue());  // Col E
+    const curAvail = n(sheet.getRange(foundRow, 4).getValue()); // Col D
+    const curMade  = n(sheet.getRange(foundRow, 5).getValue()); // Col E
 
-    const delta = Math.max(0, n(newManufacturedTotal) - curMade);
+    const delta = Math.max(0, made - curMade);
 
     // Update Manufactured Total (Col E)
-    sheet.getRange(foundRow, 5).setValue(n(newManufacturedTotal));
+    sheet.getRange(foundRow, 5).setValue(made);
 
-    // Increase Available by delta (Col D) but NEVER overwrite user allocations
-    if (delta > 0) sheet.getRange(foundRow, 4).setValue(curAvail + delta);
+    // Increase Available by delta (Col D)
+    if (delta > 0) {
+      sheet.getRange(foundRow, 4).setValue(curAvail + delta);
+
+      // Stock history entry for completions
+      if (shouldLogCompletion && cleanSku) {
+        logStockTransaction(cleanSku, delta, "Completed Manufacture", "Workshop Stock");
+      }
+    }
 
     // Keep product name fresh (Col C)
     sheet.getRange(foundRow, 3).setValue(productName);
 
   } else {
     // New row: set Available = Manufactured Total
-    const made = n(newManufacturedTotal);
     if (made > 0) {
       sheet.appendRow([customer, sku, productName, made, made]);
+
+      if (shouldLogCompletion && cleanSku) {
+        logStockTransaction(cleanSku, made, "Completed Manufacture", "Workshop Stock");
+      }
     }
   }
 }
+
 
 function allocateFinishedGoodsToOrder(shopifyRowIndex, qtyToAllocate) {
 
@@ -1480,8 +1493,9 @@ function allocateFinishedGoodsToOrder(shopifyRowIndex, qtyToAllocate) {
 
   // Finished Goods lookup (Workshop Stock only)
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const fgSheet = ss.getSheetByName("Finished Goods");
-  if (!fgSheet) throw new Error("Finished Goods tab missing");
+  const fgSheet = _getFurnitureStockSheet_(false);
+   if (!fgSheet) throw new Error("Furniture Stock tab missing");
+
 
   const fgData = fgSheet.getDataRange().getValues();
   const fgHeaders = fgData[0].map(h => _normTxt(h).toLowerCase());
@@ -1491,7 +1505,7 @@ function allocateFinishedGoodsToOrder(shopifyRowIndex, qtyToAllocate) {
   const idxFgSku = fhm["sku"];
   const idxAvail = fhm["qty available"];
   if ([idxFgCustomer, idxFgSku, idxAvail].some(x => x == null)) {
-    throw new Error("Finished Goods headers must include: Customer Name, SKU, Qty Available");
+    throw new Error("Furniture Stock headers must include: Customer Name, SKU, Qty Available");
   }
 
   let fgRowIndex = -1;
@@ -1503,7 +1517,7 @@ function allocateFinishedGoodsToOrder(shopifyRowIndex, qtyToAllocate) {
       break;
     }
   }
-  if (fgRowIndex < 0) throw new Error(`No Workshop Stock found in Finished Goods for SKU: ${sku}`);
+  if (fgRowIndex < 0) throw new Error(`No Workshop Stock found in Furniture Stock for SKU: ${sku}`);
 
   const currentAvail = Number(fgSheet.getRange(fgRowIndex, idxAvail + 1).getValue()) || 0;
   if (qtyToAllocate > currentAvail) throw new Error(`Not enough stock. Available: ${currentAvail}`);
@@ -1513,7 +1527,7 @@ function allocateFinishedGoodsToOrder(shopifyRowIndex, qtyToAllocate) {
 
   // Log stock history
   const reason = `Allocation to ${orderId} (${customer})`;
-  logStockTransaction(`Finished Goods: ${sku} ${productName}`.trim(), -qtyToAllocate, reason);
+  logStockTransaction(`Furniture Stock: ${sku} ${productName}`.trim(), -qtyToAllocate, reason);
 
   // Update Import Status (replace or add ALLOCATED note)
   const newTotalAllocated = alreadyAllocated + qtyToAllocate;
@@ -1568,3 +1582,4 @@ function getColumnMap(sheet) {
   });
   return map;
 }
+
