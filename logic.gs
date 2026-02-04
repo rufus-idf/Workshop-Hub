@@ -301,6 +301,9 @@ function processComponentBatch(updates) {
   if (!sheet) throw new Error("Sheet 'Components Hub' missing");
   if (!Array.isArray(updates)) return [];
 
+  const stockSheet = ss.getSheetByName("Component Stock");
+  const hubSheet = ss.getSheetByName("Manufacture Hub");
+
   const lock = LockService.getScriptLock();
   lock.waitLock(20000);
 
@@ -309,6 +312,29 @@ function processComponentBatch(updates) {
   const results = [];
 
   try {
+    const stockMap = {};
+    if (stockSheet && stockSheet.getLastRow() > 1) {
+      const stockData = stockSheet.getDataRange().getValues();
+      for (let i = 1; i < stockData.length; i++) {
+        const name = _normTxt(stockData[i][1]);
+        const qty = Number(stockData[i][4]) || 0;
+        if (name) stockMap[`name:${name.toLowerCase()}`] = { rowIndex: i + 1, qty };
+      }
+    }
+
+    const productSkuMap = {};
+    if (hubSheet && hubSheet.getLastRow() > 1) {
+      const hubData = hubSheet.getDataRange().getValues();
+      for (let i = 1; i < hubData.length; i++) {
+        const orderId = _normTxt(hubData[i][0]);
+        const productName = _normTxt(hubData[i][2]);
+        const sku = _normTxt(hubData[i][3]);
+        if (orderId && productName && sku) {
+          productSkuMap[`${orderId}||${productName}`.toLowerCase()] = sku;
+        }
+      }
+    }
+
     updates.sort((a, b) => (a.ts || 0) - (b.ts || 0));
 
     updates.forEach(u => {
@@ -346,6 +372,38 @@ function processComponentBatch(updates) {
 
       if (next < 0) next = 0;
       if (required > 0 && next > required) next = required;
+
+      const delta = next - cur;
+
+      if (delta > 0) {
+        if (!stockSheet) {
+          results.push({ rowIndex, outOfStock: true, current: cur, available: 0, message: "Component Stock tab missing" });
+          return;
+        }
+
+        const compRow = sheet.getRange(rowIndex, 1, 1, 5).getValues()[0];
+        const orderId = _normTxt(compRow[0]);
+        const productName = _normTxt(compRow[2]);
+        const compName = _normTxt(compRow[3]);
+        const nameKey = compName ? `name:${compName.toLowerCase()}` : "";
+        const stockEntry = nameKey ? stockMap[nameKey] : null;
+
+        const available = stockEntry ? Number(stockEntry.qty) || 0 : 0;
+        if (!stockEntry || available < delta) {
+          results.push({ rowIndex, outOfStock: true, current: cur, available, message: "Insufficient component stock" });
+          return;
+        }
+
+        const newStockQty = available - delta;
+        stockSheet.getRange(stockEntry.rowIndex, 5).setValue(newStockQty);
+        stockEntry.qty = newStockQty;
+
+        if (nameKey && stockMap[nameKey]) stockMap[nameKey].qty = newStockQty;
+
+        const productSku = productSkuMap[`${orderId}||${productName}`.toLowerCase()] || "";
+        const reason = `Allocated to ${productSku || productName || "Product"}`;
+        logStockTransaction(compName || "Component", -delta, reason, orderId || "Project");
+      }
 
       sheet.getRange(rowIndex, 8).setValue(next);     // Packed
       sheet.getRange(rowIndex, 9).setValue(userEmail); // Last User

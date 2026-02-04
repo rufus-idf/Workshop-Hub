@@ -2992,6 +2992,17 @@ function sendCompQueueToServer() {
           return;
         }
 
+        if (r.outOfStock) {
+          const available = (r.available !== undefined) ? ` Available: ${r.available}.` : "";
+          alert(`Out of stock for this component.${available}`);
+          const el = document.getElementById(`comp-packed-${r.rowIndex}`);
+          if (el && r.current !== undefined) el.value = r.current;
+
+          const c = getCompByRow(r.rowIndex);
+          if (c && r.current !== undefined) c.qtyPacked = r.current;
+          return;
+        }
+
         // If user changed again while saving, don't overwrite UI
         if (pendingCompUpdates[key]) return;
 
