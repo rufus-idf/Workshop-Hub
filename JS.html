@@ -259,10 +259,14 @@ function getRequiredUnits(prodData, deliveryTotal) {
 
   // Fallback for Workshop Stock (no delivery rows)
   if (prodData && prodData.panels && prodData.panels.length) {
-    const p = prodData.panels[0];
-    const per = Number(p.qtyPerUnit) || 1;
-    const qtyOrder = Number(p.qtyOrder) || 0;
-    return per ? Math.round(qtyOrder / per) : 0;
+    let maxUnits = 0;
+    prodData.panels.forEach(p => {
+      const per = Number(p.qtyPerUnit) || 1;
+      const qtyOrder = Number(p.qtyOrder) || 0;
+      const units = per ? Math.round(qtyOrder / per) : 0;
+      if (units > maxUnits) maxUnits = units;
+    });
+    return maxUnits;
   }
 
   return 0;
@@ -1428,7 +1432,8 @@ google.script.run.assignToRoom(currentOrder, safeProd, m.qty, roomName);
       const fin = Number(p.qtyEdgeFinish) || 0;
       const pack = Number(p.qtyPacked) || 0;
 
-      const percent = req > 0 ? Math.round((pack / req) * 100) : 0;
+      const currentStage = Math.max(cut, proc, fin, pack);
+      const percent = req > 0 ? Math.round((currentStage / req) * 100) : 0;
       const isDone = (req > 0 && pack >= req);
 
       const row = document.createElement('div');
