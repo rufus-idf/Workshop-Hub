@@ -138,6 +138,14 @@
   </div>
 
   <div id="deliv-rooms-view" class="hidden">
+    <div class="d-flex justify-content-end mb-3">
+      <button type="button"
+              id="room-export-btn"
+              class="btn btn-outline-dark rounded-pill"
+              onclick="exportRoomListToGoogleSheets()">
+        📄 Export to Google Sheets
+      </button>
+    </div>
     <div id="rooms-list"></div>
     <div class="fab" onclick="openAssignModal()">+</div>
   </div>
