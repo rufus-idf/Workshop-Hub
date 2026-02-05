@@ -2715,11 +2715,6 @@ function renderShopifyOrdersModal(rows) {
                       onclick='openSmartOrder(${jsStr(g.orderId)})'>
                 🧠 Smart Order
               </button>
-              <button class="btn btn-dark btn-sm rounded-pill"
-                      type="button"
-                      onclick='runSmartOrderAuthorization(${jsStr(g.orderId)})'>
-                🔐 Authorize
-              </button>
             </div>
           </div>
         </h2>
@@ -2821,7 +2816,6 @@ function openSmartOrder(orderId) {
       <div class="mt-2">Loading Smart Order…</div>
     </div>
     <div class="d-flex gap-2 justify-content-center mt-2">
-      <button class="btn btn-dark btn-sm rounded-pill" type="button" onclick='runSmartOrderAuthorization(${jsStr(orderId)})'>Run Authorization Check</button>
       <button class="btn btn-outline-dark btn-sm rounded-pill" type="button" onclick='openSmartOrder(${jsStr(orderId)})'>Retry</button>
     </div>
   `;
@@ -2832,11 +2826,10 @@ function openSmartOrder(orderId) {
     if (rpcCompleted) return;
     bodyEl.innerHTML = `
       <div class="alert alert-warning mb-0">
-        <strong>Waiting for Google authorization…</strong><br>
-        If nothing opens, click <strong>Run Authorization Check</strong> below.
+        <strong>Still loading Smart Order…</strong><br>
+        If it doesn't load, click <strong>Retry</strong> below.
       </div>
       <div class="d-flex gap-2 mt-3">
-        <button class="btn btn-dark btn-sm rounded-pill" type="button" onclick='runSmartOrderAuthorization(${jsStr(orderId)})'>Run Authorization Check</button>
         <button class="btn btn-outline-dark btn-sm rounded-pill" type="button" onclick='openSmartOrder(${jsStr(orderId)})'>Retry</button>
       </div>
     `;
