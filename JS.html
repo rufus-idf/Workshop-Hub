@@ -2024,17 +2024,16 @@ saveTimer = setTimeout(sendQueueToServer, 500);
   function openCNCView() {
   showView('view-cnc');
 
-  const select = document.getElementById('cnc-job-filter');
-  if (select) {
-    select.innerHTML = '<option value="">-- Show All Stock --</option>';
-    Object.keys(rawData).reverse().forEach(id => {
-      const cust = rawData[id].customer;
-      const opt = document.createElement('option');
-      opt.value = id;
-      opt.text = `${cust} (#${id})`;
-      select.appendChild(opt);
-    });
-    if (currentOrder) select.value = currentOrder;
+  const label = document.getElementById('cnc-order-label');
+  if (!currentOrder || !rawData[currentOrder]) {
+    if (label) label.innerText = 'No order selected';
+    cncWoodViewData = stockData.wood || [];
+    renderWoodStock(cncWoodViewData, 'cnc');
+    return;
+  }
+
+  if (label) {
+    label.innerText = `${rawData[currentOrder].customer} (#${currentOrder})`;
   }
 
   filterStockByJob();
@@ -2262,43 +2261,31 @@ updateBreadcrumbsForView("view-cnc");
       document.getElementById('off-len').value = '';
       document.getElementById('off-wid').value = '';
 
-      // 3. Populate Projects Dropdown (from rawData)
-      const projSelect = document.getElementById('alloc-project-select');
-      projSelect.innerHTML = '<option value="">-- Select Active Job --</option>';
-      
-      // Sort orders by ID desc
-      Object.keys(rawData).sort().reverse().forEach(id => {
-          const cust = rawData[id].customer;
-          const opt = document.createElement('option');
-          opt.value = id;
-          opt.text = `${cust} (#${id})`;
-          projSelect.appendChild(opt);
-      });
+      // 3. Use current order only
+      const orderLabel = document.getElementById('alloc-project-name');
+      const wrap = document.getElementById('alloc-prod-wrapper');
+      const prodSelect = document.getElementById('alloc-product-select');
+      prodSelect.innerHTML = '';
+
+      if (!currentOrder || !rawData[currentOrder]) {
+          if (orderLabel) orderLabel.innerText = 'No order selected';
+          wrap.classList.add('hidden');
+      } else {
+          if (orderLabel) orderLabel.innerText = `${rawData[currentOrder].customer} (#${currentOrder})`;
+
+          const products = rawData[currentOrder].products || {};
+          for (const prodName in products) {
+              const opt = document.createElement('option');
+              opt.value = prodName;
+              opt.text = prodName;
+              prodSelect.appendChild(opt);
+          }
+
+          wrap.classList.toggle('hidden', prodSelect.options.length === 0);
+      }
 
       // 4. Show Modal
       new bootstrap.Modal(document.getElementById('allocateModal')).show();
-  }
-
-  function populateAllocProducts() {
-      const orderId = document.getElementById('alloc-project-select').value;
-      const wrap = document.getElementById('alloc-prod-wrapper');
-      const prodSelect = document.getElementById('alloc-product-select');
-      
-      prodSelect.innerHTML = '';
-      
-      if (!orderId) {
-          wrap.classList.add('hidden');
-          return;
-      }
-
-      const products = rawData[orderId].products;
-      for (const prodName in products) {
-          const opt = document.createElement('option');
-          opt.value = prodName;
-          opt.text = prodName;
-          prodSelect.appendChild(opt);
-      }
-      wrap.classList.remove('hidden');
   }
 
   function stepAllocQty(change) {
@@ -2318,11 +2305,12 @@ updateBreadcrumbsForView("view-cnc");
 
   function confirmAllocation() {
       const rowIndex = parseInt(document.getElementById('alloc-row-index').value);
-      const project = document.getElementById('alloc-project-select').value;
+      const project = currentOrder;
       const product = document.getElementById('alloc-product-select').value;
       const qtyUsed = parseInt(document.getElementById('alloc-qty').value);
       
-      if (!project) { alert("Please select a Project."); return; }
+      if (!project) { alert("No active order selected."); return; }
+      if (!product) { alert("Please select a Product."); return; }
       
       // Offcut Data
       let offcuts = null;
@@ -2602,29 +2590,11 @@ function commitReceive() {
   }
 
   function populateCNCJobSelect() {
-      const select = document.getElementById('cnc-job-filter');
-      if(!select) return; // Safety check
-      
-      select.innerHTML = '<option value="">-- Show All Stock --</option>';
-      
-      // Populate with Orders
-      Object.keys(rawData).reverse().forEach(id => {
-          const cust = rawData[id].customer;
-          const opt = document.createElement('option');
-          opt.value = id;
-          opt.text = `${cust} (#${id})`;
-          select.appendChild(opt);
-      });
-
-      // If we entered CNC view from a specific order, auto-select it
-      if(currentOrder) {
-          select.value = currentOrder;
-          filterStockByJob(); // <--- TRIGGERS THE FILTER
-      }
-  }
+  filterStockByJob();
+}
 
   function filterStockByJob() {
-  const orderId = document.getElementById('cnc-job-filter')?.value;
+  const orderId = currentOrder;
   const bannerSlot = document.getElementById('cnc-filter-banner-slot');
   if (bannerSlot) bannerSlot.innerHTML = "";
 
@@ -2635,8 +2605,8 @@ function commitReceive() {
     return;
   }
 
-  // If "Show All" selected
-  if (!orderId) {
+  // If no active order context, show all stock
+  if (!orderId || !rawData[orderId]) {
     cncWoodViewData = stockData.wood;
     renderWoodStock(cncWoodViewData, 'cnc');
     return;
@@ -2678,10 +2648,6 @@ function commitReceive() {
       bannerSlot.innerHTML = `
         <div class="alert alert-success py-2 mb-2 small shadow-sm">
           Found ${filteredList.length} items for <strong>${rawData[orderId].customer}</strong>
-          <span class="float-end text-decoration-underline" style="cursor:pointer"
-                onclick="document.getElementById('cnc-job-filter').value=''; filterStockByJob();">
-            Clear
-          </span>
         </div>`;
     }
   } else {
@@ -3903,7 +3869,7 @@ function openCncCutModal(orderId, productName) {
 
   updateCncCutSummary();
 
-  new bootstrap.Modal(document.getElementById("cncCutModal")).show();
+  new bootstrap.Modal(document.getElementById("cncCutModal"), { backdrop: 'static', keyboard: false }).show();
 }
 
 function cncCutAdd(rowIndex, inc) {
