@@ -74,16 +74,66 @@ function setHealthBadge(isOnline) {
 }
 
 // POLLING FOR NEW ORDERS
+function summarizePendingOrders(rows) {
+  const safeRows = Array.isArray(rows) ? rows : [];
+  const unique = new Set();
+
+  safeRows.forEach(r => {
+    const orderId = String((r && r.orderId) || "").trim().toLowerCase();
+    const customer = String((r && r.customer) || "").trim().toLowerCase();
+    if (!orderId) return;
+    unique.add(`${orderId}|||${customer}`);
+  });
+
+  return {
+    orderCount: unique.size,
+    lineCount: safeRows.length
+  };
+}
+
+function setOrderPendingIndicator(summary) {
+  const orderCount = Number(summary && summary.orderCount) || 0;
+  const lineCount = Number(summary && summary.lineCount) || 0;
+  const hasPending = orderCount > 0;
+
+  const badge = document.getElementById("order-badge");
+  if (badge) badge.classList.toggle("hidden", !hasPending);
+
+  const pill = document.getElementById("order-pending-pill");
+  if (pill) {
+    if (hasPending) {
+      const orderWord = orderCount === 1 ? "order" : "orders";
+      pill.textContent = `${orderCount} ${orderWord} waiting`;
+      pill.classList.remove("hidden");
+    } else {
+      pill.classList.add("hidden");
+    }
+  }
+
+  const banner = document.getElementById("orders-pending-banner");
+  const countEl = document.getElementById("orders-pending-count");
+  const linesEl = document.getElementById("orders-pending-lines");
+  if (banner && countEl) {
+    countEl.textContent = String(orderCount);
+    banner.classList.toggle("hidden", !hasPending);
+  }
+  if (linesEl) {
+    const lineWord = lineCount === 1 ? "line item" : "line items";
+    linesEl.textContent = `(${lineCount} ${lineWord})`;
+  }
+
+  const btn = document.getElementById("orders-btn");
+  if (btn) btn.classList.toggle("pending-attention", hasPending);
+}
 function checkOrderBadge() {
   google.script.run
-    .withSuccessHandler(hasPending => {
-      const badge = document.getElementById("order-badge");
-      if (badge) {
-         if (hasPending) badge.classList.remove("hidden");
-         else badge.classList.add("hidden");
-      }
+    .withSuccessHandler(rows => {
+      setOrderPendingIndicator(summarizePendingOrders(rows));
     })
-    .hasPendingOrders();
+    .withFailureHandler(() => {
+      setOrderPendingIndicator({ orderCount: 0, lineCount: 0 });
+    })
+    .getPendingShopifyOrdersWithStock();
 }
 
 // Add this to your existing startHealthMonitor function
@@ -170,6 +220,7 @@ google.script.run
    mergeWorkshopStockOrders();
    console.log("Data Loaded", rawData);
    renderJobs();
+   checkOrderBadge();
 
   mountBreadcrumb("view-jobs");
   updateBreadcrumbsForView("view-jobs");
@@ -2700,7 +2751,9 @@ function refreshShopifyOrdersModal() {
 
   google.script.run
     .withSuccessHandler(rows => {
-      renderShopifyOrdersModal(rows || []);
+      const safeRows = rows || [];
+      setOrderPendingIndicator(summarizePendingOrders(safeRows));
+      renderShopifyOrdersModal(safeRows);
     })
     .withFailureHandler(err => {
       if (listEl) listEl.innerHTML = `<div class="text-danger">Error: ${err.message}</div>`;

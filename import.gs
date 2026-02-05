@@ -402,27 +402,35 @@ function importApprovedShopifyRow_(shopifyRowIndex) {
   return "SUCCESS";
 }
 
-// HELPER: Check for Pending Orders (For Notification Badge)
-function hasPendingOrders() {
+// HELPER: Pending Shopify Orders Summary (for notification badge + counter)
+function getPendingOrderSummary() {
   try {
     const sh = _getShopifyOrdersSheet();
     const data = sh.getDataRange().getValues();
-    
-    // Find "Import Status" column index
-    const headers = data[0].map(h => String(h).trim().toLowerCase());
-    const idx = headers.indexOf("import status");
-    if (idx === -1) return false;
+    if (!data || data.length < 2) return { hasPending: false, pendingCount: 0 };
 
-    // Check rows (skip header)
+    const headers = data[0].map(h => String(h || "").trim().toLowerCase());
+    const idx = headers.indexOf("import status");
+    if (idx === -1) return { hasPending: false, pendingCount: 0 };
+
+    let pendingCount = 0;
     for (let i = 1; i < data.length; i++) {
-      const status = String(data[i][idx]).toUpperCase().trim();
-      // If status is NOT "IMPORTED" and NOT "CANCELLED", it is pending
+      const status = String(data[i][idx] || "").toUpperCase().trim();
       if (!status.startsWith("IMPORTED") && !status.startsWith("CANCELLED")) {
-        return true;
+        pendingCount++;
       }
     }
-    return false;
+
+    return {
+      hasPending: pendingCount > 0,
+      pendingCount
+    };
   } catch (e) {
-    return false;
+    return { hasPending: false, pendingCount: 0 };
   }
+}
+
+// Backward-compatible helper used by older UI calls
+function hasPendingOrders() {
+  return getPendingOrderSummary().hasPending;
 }
