@@ -1016,7 +1016,7 @@ row.innerHTML = `
     }
   }
 
-  function renderRooms() {
+function renderRooms() {
   computeDeliveryStatsForCurrentOrder();
 
   const list = document.getElementById('rooms-list');
@@ -1132,6 +1132,53 @@ row.innerHTML = `
   });
 
   list.appendChild(accordion);
+}
+
+function setRoomExportState(enabled, label) {
+  const btn = document.getElementById('room-export-btn');
+  if (!btn) return;
+  btn.innerText = label || '📄 Export to Google Sheets';
+  btn.disabled = !enabled;
+  btn.classList.toggle('opacity-75', !enabled);
+  btn.setAttribute('aria-busy', enabled ? 'false' : 'true');
+}
+
+function getBucketQtyForCurrentOrder() {
+  const bucket = rawData[currentOrder]?.delivery?.bucket || {};
+  return Object.values(bucket).reduce((sum, item) => sum + (Number(item?.qty) || 0), 0);
+}
+
+function exportRoomListToGoogleSheets() {
+  if (!currentOrder) {
+    alert('No order selected. Please open a job first.');
+    return;
+  }
+
+  const bucketQty = getBucketQtyForCurrentOrder();
+  if (bucketQty > 0) {
+    const proceed = confirm(
+      `Not all products have been given rooms (${bucketQty} remaining in Bucket). Are you sure you want to create the room list?`
+    );
+    if (!proceed) return;
+  }
+
+  setRoomExportState(false, 'Exporting…');
+
+  google.script.run
+    .withSuccessHandler(result => {
+      setRoomExportState(true, '📄 Export to Google Sheets');
+      if (!result || !result.url) {
+        alert('Room list exported, but no spreadsheet link was returned.');
+        return;
+      }
+      window.open(result.url, '_blank');
+    })
+    .withFailureHandler(err => {
+      setRoomExportState(true, '📄 Export to Google Sheets');
+      const message = err && err.message ? err.message : 'Export failed.';
+      alert(`Export failed: ${message}`);
+    })
+    .exportRoomListToSheets(currentOrder);
 }
 
 
