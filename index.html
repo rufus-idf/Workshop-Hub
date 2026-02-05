@@ -208,10 +208,8 @@
       <div><h6 class="text-muted small mb-0">STATION</h6><h4 class="mb-0">CNC Operator</h4></div>
     </div>
 
-    <div class="px-3 pt-2 pb-2 bg-light border-bottom">
-        <select id="cnc-job-filter" class="form-select shadow-sm" onchange="filterStockByJob()">
-            <option value="">Loading...</option>
-        </select>
+    <div class="px-3 pt-2 pb-2 bg-light border-bottom small text-muted">
+      Order: <strong id="cnc-order-label">Loading...</strong>
     </div>
 
     <div id="cnc-load-view">
@@ -336,10 +334,8 @@
         <div class="modal-body">
             <input type="hidden" id="alloc-row-index">
 
-            <label class="small fw-bold text-muted mb-1">1. ASSIGN TO PROJECT</label>
-            <select id="alloc-project-select" class="form-select mb-3" onchange="populateAllocProducts()">
-                <option value="">-- Select Active Job --</option>
-            </select>
+            <label class="small fw-bold text-muted mb-1">1. ASSIGNED ORDER</label>
+            <div id="alloc-project-name" class="form-control mb-3 bg-light">-</div>
 
             <div id="alloc-prod-wrapper" class="hidden">
                 <label class="small fw-bold text-muted mb-1">2. SELECT PRODUCT</label>
@@ -390,7 +386,7 @@
   </div>
 
   <!-- CNC Cut Sheet Modal -->
-<div class="modal fade" id="cncCutModal" tabindex="-1" aria-hidden="true">
+<div class="modal fade" id="cncCutModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
   <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
     <div class="modal-content border-0 shadow">
       <div class="modal-header border-0 pb-0">
