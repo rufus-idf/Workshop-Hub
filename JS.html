@@ -2709,11 +2709,18 @@ function renderShopifyOrdersModal(rows) {
                 </div>
               </div>
             </button>
-            <button class="btn btn-outline-dark btn-sm rounded-pill flex-shrink-0"
-                    type="button"
-                    onclick="openSmartOrder(${jsStr(g.orderId)})">
-              🧠 Smart Order
-            </button>
+            <div class="d-flex gap-1 flex-shrink-0">
+              <button class="btn btn-outline-dark btn-sm rounded-pill"
+                      type="button"
+                      onclick="openSmartOrder(${jsStr(g.orderId)})">
+                🧠 Smart Order
+              </button>
+              <button class="btn btn-dark btn-sm rounded-pill"
+                      type="button"
+                      onclick="runSmartOrderAuthorization(${jsStr(g.orderId)})">
+                🔐 Authorize
+              </button>
+            </div>
           </div>
         </h2>
 
@@ -2753,6 +2760,8 @@ function runSmartOrderAuthorization(orderId) {
   const bodyEl = document.getElementById("smart-order-body");
   if (bodyEl) {
     bodyEl.innerHTML = `<div class="text-center text-muted py-4"><div class="spinner-border"></div><div class="mt-2">Checking authorization…</div></div>`;
+  } else {
+    alert("Running Smart Order authorization check…");
   }
 
   google.script.run
@@ -2768,6 +2777,8 @@ function runSmartOrderAuthorization(orderId) {
             <button class="btn btn-dark btn-sm rounded-pill" onclick="openSmartOrder(${jsStr(orderId)})">Retry Smart Order</button>
           </div>
         `;
+      } else {
+        alert(`${statusMsg} Try Smart Order again.`);
       }
       openSmartOrder(orderId);
     })
