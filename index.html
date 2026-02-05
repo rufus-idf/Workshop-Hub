@@ -30,13 +30,18 @@
           <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
         <div class="modal-body">
-            <label class="small text-muted mb-1">ROOM NAME / NUMBER</label>
+            <label class="small text-muted mb-1">CHOOSE EXISTING ROOM</label>
+            <select id="existing-room-select" class="form-select form-control-lg mb-3 fw-bold">
+              <option value="">+ Create / type a new room below</option>
+            </select>
+
+            <label class="small text-muted mb-1">OR NEW ROOM NAME / NUMBER</label>
             <input type="text" id="new-room-name" class="form-control form-control-lg mb-4 fw-bold" placeholder="e.g. Room 101">
             <h6 class="fw-bold mb-3">Select Items from Bucket</h6>
             <div id="assign-list"></div>
         </div>
         <div class="modal-footer border-0">
-          <button type="button" class="btn btn-dark w-100 rounded-pill py-3 fw-bold" onclick="commitAssignment()">Confirm Move ➔</button>
+          <button type="button" class="btn btn-dark w-100 rounded-pill py-3 fw-bold" id="assign-confirm-btn" onclick="commitAssignment()">Confirm Move ➔</button>
         </div>
       </div>
     </div>
@@ -138,6 +143,14 @@
   </div>
 
   <div id="deliv-rooms-view" class="hidden">
+    <div class="d-flex justify-content-end mb-3">
+      <button type="button"
+              id="room-export-btn"
+              class="btn btn-outline-dark rounded-pill"
+              onclick="exportRoomListToGoogleSheets()">
+        📄 Export to Google Sheets
+      </button>
+    </div>
     <div id="rooms-list"></div>
     <div class="fab" onclick="openAssignModal()">+</div>
   </div>

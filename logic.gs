@@ -3,6 +3,24 @@ const SHOPIFY_ORDERS_TAB_NAME = "Sheet1";
 const FURNITURE_STOCK_TAB_NAME = "Furniture Stock";
 const LEGACY_FINISHED_GOODS_TAB_NAME = "Finished Goods";
 
+function squeezeSpaces_(v) {
+  return String(v ?? "").replace(/\u00A0/g, " ").trim().replace(/\s+/g, " ");
+}
+
+function canonicalRoomName_(v) {
+  const cleaned = squeezeSpaces_(v);
+  if (!cleaned) return "";
+
+  const m = cleaned.match(/^room\s*([a-z0-9-]+)$/i);
+  if (m) return "Room " + String(m[1]).toUpperCase();
+
+  return cleaned.replace(/\b\w/g, function(ch) { return ch.toUpperCase(); });
+}
+
+function roomKey_(v) {
+  return squeezeSpaces_(v).toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
 // Helper: get Furniture Stock sheet (auto-migrates legacy "Finished Goods" -> "Furniture Stock")
 function _getFurnitureStockSheet_(createIfMissing) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -123,7 +141,7 @@ if (!product) product = norm(row[3] || "Unknown Product");
 delivData.forEach((row) => {
   const orderId = norm(row[0]);
   const product = norm(row[3]);
-  const room = norm(row[4]); // ✅ was String(...)
+  const room = canonicalRoomName_(row[4]); // ✅ canonical room
   const status = norm(row[5]) || "Pending"; // ✅ normalise
 
   if (!tree[orderId]) return;
@@ -1036,6 +1054,91 @@ function exportSmartOrderToSheets(orderId) {
   };
 }
 
+function exportRoomListToSheets(orderId) {
+  const targetOrderId = String(orderId || "").trim();
+  if (!targetOrderId) throw new Error("Missing order ID for room list export.");
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const deliverySheet = ss.getSheetByName("Delivery Hub");
+  if (!deliverySheet) throw new Error("Delivery Hub tab is missing.");
+
+  const data = deliverySheet.getDataRange().getValues();
+  if (!data || data.length <= 1) throw new Error("No delivery data found.");
+
+  const norm = (v) => String(v ?? "").replace(/\u00A0/g, " ").trim();
+  const rows = [];
+  let customerName = "";
+
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    if (norm(row[0]) !== targetOrderId) continue;
+
+    const customer = String(row[1] || "").trim();
+    if (!customerName && customer) customerName = customer;
+
+    const product = String(row[3] || "").trim();
+    const room = canonicalRoomName_(row[4]);
+    const status = norm(row[5]) || "Pending";
+
+    if (!room) continue;
+    rows.push({ room, product, status });
+  }
+
+  if (rows.length === 0) {
+    throw new Error("No room assignments found for this order.");
+  }
+
+  rows.sort((a, b) => {
+    const roomCmp = a.room.localeCompare(b.room);
+    if (roomCmp !== 0) return roomCmp;
+    const productCmp = a.product.localeCompare(b.product);
+    if (productCmp !== 0) return productCmp;
+    return a.status.localeCompare(b.status);
+  });
+
+  const grouped = new Map();
+  rows.forEach(item => {
+    const key = `${item.room}|||${item.product}|||${item.status}`;
+    grouped.set(key, (grouped.get(key) || 0) + 1);
+  });
+
+  const tz = Session.getScriptTimeZone();
+  const timestamp = Utilities.formatDate(new Date(), tz, "yyyy-MM-dd HH:mm");
+  const generatedOn = Utilities.formatDate(new Date(), tz, "dd/MM/yyyy HH:mm");
+  const out = SpreadsheetApp.create(`Room List - ${targetOrderId} - ${timestamp}`);
+  const sh = out.getSheets()[0];
+  sh.setName("Room List");
+
+  let r = 1;
+  sh.getRange(r++, 1).setValue("Room List Export").setFontWeight("bold").setFontSize(14);
+  sh.getRange(r++, 1).setValue(`Order ID: ${targetOrderId}`);
+  sh.getRange(r++, 1).setValue(`Customer: ${customerName || "Unknown"}`);
+  sh.getRange(r++, 1).setValue(`Generated: ${generatedOn}`);
+  r += 1;
+
+  const headerRow = r;
+  sh.getRange(r, 1, 1, 4).setValues([["Room", "Product", "Qty", "Status"]]);
+  sh.getRange(r, 1, 1, 4).setFontWeight("bold").setBackground("#f1f3f4");
+  r++;
+
+  const tableRows = Array.from(grouped.entries()).map(([key, qty]) => {
+    const [room, product, status] = key.split("|||");
+    return [room, product, qty, status];
+  });
+
+  sh.getRange(r, 1, tableRows.length, 4).setValues(tableRows);
+
+  const lastRow = r + tableRows.length - 1;
+  sh.getRange(headerRow, 1, lastRow - headerRow + 1, 4).createFilter();
+  sh.autoResizeColumns(1, 4);
+
+  return {
+    spreadsheetId: out.getId(),
+    url: out.getUrl(),
+    rowsExported: tableRows.length
+  };
+}
+
 function _writeSmartOrderTableSection_(sheet, startRow, title, headers, rows) {
   let row = startRow;
   sheet.getRange(row, 1).setValue(title).setFontWeight("bold");
@@ -1110,6 +1213,8 @@ function updateComponentStatus(rowIndex, isPacked) {
 
 // 7. DELIVERY: ASSIGN ITEMS TO ROOM (Planning Phase)
 function assignToRoom(orderId, productName, qtyToAssign, roomName) {
+  roomName = canonicalRoomName_(roomName);
+  if (!roomName) return "Error: Room name is required";
 
     const lock = LockService.getScriptLock();
   lock.waitLock(30000);
@@ -1167,6 +1272,7 @@ if (normTxt(row[4]) !== "") continue; // already assigned
 
 // 8. DELIVERY: UPDATE STATUS (DIAGNOSTIC VERSION)
 function updateDeliveryStatus(orderId, roomName, productName, oldStatus, newStatus, qtyToUpdate) {
+  roomName = canonicalRoomName_(roomName);
 
     const lock = LockService.getScriptLock();
   lock.waitLock(30000);
@@ -1224,7 +1330,7 @@ if (normTxt(row[0]) === normTxt(orderId) && normTxt(row[3]) === normTxt(productN
     const row = data[i];
 
     if (normTxt(row[0]) !== normTxt(orderId)) continue;
-    if (normTxt(row[4]) !== normTxt(roomName)) continue;
+    if (roomKey_(row[4]) !== roomKey_(roomName)) continue;
     if (normTxt(row[3]) !== normTxt(productName)) continue;
 
 
@@ -1317,6 +1423,7 @@ if (minCompsReady === Infinity) minCompsReady = 0;
 
 // 10. DELIVERY: UNASSIGN ITEMS (Return to Bucket)
 function unassignFromRoom(orderId, roomName, productName, qtyToUnassign) {
+  roomName = canonicalRoomName_(roomName);
 
     const lock = LockService.getScriptLock();
   lock.waitLock(30000);
@@ -1337,7 +1444,7 @@ function unassignFromRoom(orderId, roomName, productName, qtyToUnassign) {
     const row = data[i];
 
     if (normTxt(row[0]) !== normTxt(orderId)) continue;
-    if (normTxt(row[4]) !== normTxt(roomName)) continue;
+    if (roomKey_(row[4]) !== roomKey_(roomName)) continue;
     if (normTxt(row[3]) !== normTxt(productName)) continue;
 
 
