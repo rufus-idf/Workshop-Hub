@@ -528,8 +528,11 @@
         Loading...
       </div>
 
-      <div class="modal-footer border-0 pt-0">
-        <button type="button" class="btn btn-light w-100 rounded-pill" data-bs-dismiss="modal">Close</button>
+      <div class="modal-footer border-0 pt-0 d-flex gap-2">
+        <button type="button" id="smart-order-export-btn" class="btn btn-dark rounded-pill" onclick="exportSmartOrder()" disabled>
+          📄 Export to Google Sheets
+        </button>
+        <button type="button" class="btn btn-light rounded-pill ms-auto" data-bs-dismiss="modal">Close</button>
       </div>
     </div>
   </div>

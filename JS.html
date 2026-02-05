@@ -2554,6 +2554,8 @@ function commitReceive() {
 let shopifyOrdersModalInst = null;
 let shopifyBusyRows = new Set();
 let smartOrderModalInst = null;
+let currentSmartOrderId = null;
+let currentSmartOrderData = null;
 
 function openShopifyOrders() {
   const modalEl = document.getElementById("shopifyOrdersModal");
@@ -2751,6 +2753,38 @@ function renderShopifyOrdersModal(rows) {
   listEl.innerHTML = html;
 }
 
+function setSmartOrderExportState(enabled, label) {
+  const btn = document.getElementById("smart-order-export-btn");
+  if (!btn) return;
+  btn.disabled = !enabled;
+  btn.innerText = label || "📄 Export to Google Sheets";
+}
+
+function exportSmartOrder() {
+  if (!currentSmartOrderId || !currentSmartOrderData) {
+    alert("Smart Order data is not loaded yet.");
+    return;
+  }
+
+  setSmartOrderExportState(false, "Exporting…");
+
+  google.script.run
+    .withSuccessHandler(result => {
+      setSmartOrderExportState(true, "📄 Export to Google Sheets");
+      if (!result || !result.url) {
+        alert("Export completed, but no spreadsheet link was returned.");
+        return;
+      }
+      window.open(result.url, "_blank");
+    })
+    .withFailureHandler(err => {
+      setSmartOrderExportState(true, "📄 Export to Google Sheets");
+      const message = err && err.message ? err.message : "Export failed.";
+      alert(`Export failed: ${message}`);
+    })
+    .exportSmartOrderToSheets(currentSmartOrderId);
+}
+
 function runSmartOrderAuthorization(orderId) {
   const bodyEl = document.getElementById("smart-order-body");
   if (bodyEl) {
@@ -2809,6 +2843,10 @@ function openSmartOrder(orderId) {
     });
   }
 
+  currentSmartOrderId = orderId;
+  currentSmartOrderData = null;
+  setSmartOrderExportState(false, "📄 Export to Google Sheets");
+
   titleEl.innerText = `Smart Order • #${orderId}`;
   bodyEl.innerHTML = `
     <div class="text-center text-muted py-4">
@@ -2861,6 +2899,7 @@ function openSmartOrder(orderId) {
             Also confirm the executing account has access to the Shopify Orders + Product Recipe sheets.
           </div>`
         : "";
+      setSmartOrderExportState(false, "📄 Export to Google Sheets");
       bodyEl.innerHTML = `
         <div class="text-danger">Error: ${escHtml(message)}</div>
         ${hintHtml}
@@ -2878,9 +2917,14 @@ function renderSmartOrderModal(data) {
   if (!data || !data.products || data.products.length === 0) {
     titleEl.innerText = `Smart Order • #${escHtml(data?.orderId || "")}`;
     subtitleEl.innerText = data?.customer ? `Customer: ${data.customer}` : "No items pending import.";
+    setSmartOrderExportState(false, "📄 Export to Google Sheets");
     bodyEl.innerHTML = `<div class="text-center text-muted py-4">No items require manufacturing for this order.</div>`;
     return;
   }
+
+  currentSmartOrderId = data.orderId;
+  currentSmartOrderData = data;
+  setSmartOrderExportState(true, "📄 Export to Google Sheets");
 
   titleEl.innerText = `Smart Order • #${escHtml(data.orderId)}`;
   subtitleEl.innerText = `${data.customer ? `Customer: ${data.customer}` : "Customer unknown"} • Import to manufacture: ${fmtNum(data.totalToBuild)} units`;
