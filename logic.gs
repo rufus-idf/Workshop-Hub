@@ -766,10 +766,13 @@ function getSmartOrderSummary(orderId) {
       const totalUnits = qtyPerUnit * line.toBuild;
       if (!totalUnits) return;
 
-      const areaEach = Number(row[7]) || 0;
-      const perimeterEach = Number(row[8]) || 0;
-      const totalArea = areaEach * totalUnits;
-      const totalPerimeter = perimeterEach * totalUnits;
+      // Recipe column H / I values are already per finished product row
+      // (panel area/perimeter values include the panel quantity in column G).
+      // Only scale by how many units of the product we need to build.
+      const areaPerProduct = Number(row[7]) || 0;
+      const perimeterPerProduct = Number(row[8]) || 0;
+      const totalArea = areaPerProduct * line.toBuild;
+      const totalPerimeter = perimeterPerProduct * line.toBuild;
       const matType = _classifyMaterial_(material);
       const materialKey = material.toLowerCase();
 
