@@ -76,14 +76,33 @@ function setHealthBadge(isOnline) {
 // POLLING FOR NEW ORDERS
 function checkOrderBadge() {
   google.script.run
-    .withSuccessHandler(hasPending => {
+    .withSuccessHandler(summary => {
+      const hasPending = !!(summary && summary.hasPending);
+      const pendingCount = Number(summary && summary.pendingCount) || 0;
+
       const badge = document.getElementById("order-badge");
       if (badge) {
-         if (hasPending) badge.classList.remove("hidden");
-         else badge.classList.add("hidden");
+        if (hasPending) badge.classList.remove("hidden");
+        else badge.classList.add("hidden");
+      }
+
+      const pill = document.getElementById("order-pending-pill");
+      if (pill) {
+        if (hasPending && pendingCount > 0) {
+          pill.textContent = `${pendingCount} waiting`;
+          pill.classList.remove("hidden");
+        } else {
+          pill.classList.add("hidden");
+        }
       }
     })
-    .hasPendingOrders();
+    .withFailureHandler(() => {
+      const badge = document.getElementById("order-badge");
+      if (badge) badge.classList.add("hidden");
+      const pill = document.getElementById("order-pending-pill");
+      if (pill) pill.classList.add("hidden");
+    })
+    .getPendingOrderSummary();
 }
 
 // Add this to your existing startHealthMonitor function
@@ -170,6 +189,7 @@ google.script.run
    mergeWorkshopStockOrders();
    console.log("Data Loaded", rawData);
    renderJobs();
+   checkOrderBadge();
 
   mountBreadcrumb("view-jobs");
   updateBreadcrumbsForView("view-jobs");
