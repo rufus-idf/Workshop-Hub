@@ -119,6 +119,7 @@ const fmtNum = (v, digits = 0) => {
   return num.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits });
 };
 const fmtMaybe = (v, digits = 0) => (v == null ? "-" : fmtNum(v, digits));
+const jsStr = (s) => JSON.stringify(String(s ?? ""));
 
 
   // DEFINITIONS
@@ -2623,7 +2624,6 @@ function renderShopifyOrdersModal(rows) {
   const esc = (s) => String(s ?? "")
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-  const jsStr = (s) => JSON.stringify(String(s ?? ""));
 
   const accordId = "shopify-orders-accordion";
   let html = `<div class="accordion" id="${accordId}">`;
