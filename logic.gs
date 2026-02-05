@@ -3,6 +3,24 @@ const SHOPIFY_ORDERS_TAB_NAME = "Sheet1";
 const FURNITURE_STOCK_TAB_NAME = "Furniture Stock";
 const LEGACY_FINISHED_GOODS_TAB_NAME = "Finished Goods";
 
+function squeezeSpaces_(v) {
+  return String(v ?? "").replace(/\u00A0/g, " ").trim().replace(/\s+/g, " ");
+}
+
+function canonicalRoomName_(v) {
+  const cleaned = squeezeSpaces_(v);
+  if (!cleaned) return "";
+
+  const m = cleaned.match(/^room\s*([a-z0-9-]+)$/i);
+  if (m) return "Room " + String(m[1]).toUpperCase();
+
+  return cleaned.replace(/\b\w/g, function(ch) { return ch.toUpperCase(); });
+}
+
+function roomKey_(v) {
+  return squeezeSpaces_(v).toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
 // Helper: get Furniture Stock sheet (auto-migrates legacy "Finished Goods" -> "Furniture Stock")
 function _getFurnitureStockSheet_(createIfMissing) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -123,7 +141,7 @@ if (!product) product = norm(row[3] || "Unknown Product");
 delivData.forEach((row) => {
   const orderId = norm(row[0]);
   const product = norm(row[3]);
-  const room = norm(row[4]); // ✅ was String(...)
+  const room = canonicalRoomName_(row[4]); // ✅ canonical room
   const status = norm(row[5]) || "Pending"; // ✅ normalise
 
   if (!tree[orderId]) return;
@@ -1059,7 +1077,7 @@ function exportRoomListToSheets(orderId) {
     if (!customerName && customer) customerName = customer;
 
     const product = String(row[3] || "").trim();
-    const room = String(row[4] || "").trim();
+    const room = canonicalRoomName_(row[4]);
     const status = norm(row[5]) || "Pending";
 
     if (!room) continue;
@@ -1195,6 +1213,8 @@ function updateComponentStatus(rowIndex, isPacked) {
 
 // 7. DELIVERY: ASSIGN ITEMS TO ROOM (Planning Phase)
 function assignToRoom(orderId, productName, qtyToAssign, roomName) {
+  roomName = canonicalRoomName_(roomName);
+  if (!roomName) return "Error: Room name is required";
 
     const lock = LockService.getScriptLock();
   lock.waitLock(30000);
@@ -1252,6 +1272,7 @@ if (normTxt(row[4]) !== "") continue; // already assigned
 
 // 8. DELIVERY: UPDATE STATUS (DIAGNOSTIC VERSION)
 function updateDeliveryStatus(orderId, roomName, productName, oldStatus, newStatus, qtyToUpdate) {
+  roomName = canonicalRoomName_(roomName);
 
     const lock = LockService.getScriptLock();
   lock.waitLock(30000);
@@ -1309,7 +1330,7 @@ if (normTxt(row[0]) === normTxt(orderId) && normTxt(row[3]) === normTxt(productN
     const row = data[i];
 
     if (normTxt(row[0]) !== normTxt(orderId)) continue;
-    if (normTxt(row[4]) !== normTxt(roomName)) continue;
+    if (roomKey_(row[4]) !== roomKey_(roomName)) continue;
     if (normTxt(row[3]) !== normTxt(productName)) continue;
 
 
@@ -1402,6 +1423,7 @@ if (minCompsReady === Infinity) minCompsReady = 0;
 
 // 10. DELIVERY: UNASSIGN ITEMS (Return to Bucket)
 function unassignFromRoom(orderId, roomName, productName, qtyToUnassign) {
+  roomName = canonicalRoomName_(roomName);
 
     const lock = LockService.getScriptLock();
   lock.waitLock(30000);
@@ -1422,7 +1444,7 @@ function unassignFromRoom(orderId, roomName, productName, qtyToUnassign) {
     const row = data[i];
 
     if (normTxt(row[0]) !== normTxt(orderId)) continue;
-    if (normTxt(row[4]) !== normTxt(roomName)) continue;
+    if (roomKey_(row[4]) !== roomKey_(roomName)) continue;
     if (normTxt(row[3]) !== normTxt(productName)) continue;
 
 

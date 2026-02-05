@@ -108,6 +108,24 @@ function startHealthMonitor() {
 
 // Normalise strings (kills weird spaces + trims)
 const norm = (v) => String(v ?? "").replace(/\u00A0/g, " ").trim();
+const squeezeSpaces = (v) => norm(v).replace(/\s+/g, " ");
+const roomKey = (v) => squeezeSpaces(v).toLowerCase().replace(/[^a-z0-9]/g, "");
+const canonicalRoomName = (v) => {
+  const cleaned = squeezeSpaces(v);
+  if (!cleaned) return "";
+
+  const roomWithDigits = cleaned.match(/^room\s*([a-z0-9-]+)$/i);
+  if (roomWithDigits) return `Room ${roomWithDigits[1].toUpperCase()}`;
+
+  return cleaned.replace(/\b\w/g, ch => ch.toUpperCase());
+};
+
+function findExistingRoomName(roomInput) {
+  const rooms = rawData?.[currentOrder]?.delivery?.rooms || {};
+  const targetKey = roomKey(roomInput);
+  if (!targetKey) return "";
+  return Object.keys(rooms).find(room => roomKey(room) === targetKey) || "";
+}
 const escHtml = (s) => String(s ?? "")
   .replace(/&/g, "&amp;")
   .replace(/</g, "&lt;")
@@ -1331,12 +1349,18 @@ alert(
     roomInput.value = '';
     roomSelect.innerHTML = '<option value="">+ Create / type a new room below</option>';
 
+    const seenRoomKeys = new Set();
     Object.keys(rooms)
       .sort((a, b) => String(a).localeCompare(String(b)))
       .forEach(room => {
+        const canonical = canonicalRoomName(room);
+        const key = roomKey(canonical);
+        if (!key || seenRoomKeys.has(key)) return;
+        seenRoomKeys.add(key);
+
         const opt = document.createElement('option');
-        opt.value = room;
-        opt.textContent = room;
+        opt.value = canonical;
+        opt.textContent = canonical;
         roomSelect.appendChild(opt);
       });
 
@@ -1376,11 +1400,19 @@ alert(
   }
 
   function commitAssignment() {
-    const selectedRoom = norm(document.getElementById('existing-room-select')?.value);
-    const typedRoom = norm(document.getElementById('new-room-name').value);
-    const roomName = selectedRoom || typedRoom;
+    const selectedRoom = canonicalRoomName(document.getElementById('existing-room-select')?.value);
+    const typedRoom = canonicalRoomName(document.getElementById('new-room-name').value);
+    const roomInput = selectedRoom || typedRoom;
 
-    if(!roomName) { alert("Please choose an existing room or enter a new Room Name"); return; }
+    if(!roomInput) { alert("Please choose an existing room or enter a new Room Name"); return; }
+
+    const existingRoom = findExistingRoomName(roomInput);
+    const roomName = existingRoom || roomInput;
+
+    if (!selectedRoom && typedRoom && existingRoom && existingRoom !== typedRoom) {
+      const confirmed = confirm(`Use existing room \"${existingRoom}\" instead of creating \"${typedRoom}\"?`);
+      if (!confirmed) return;
+    }
 
     let moves = [];
     for(const [prod, qty] of Object.entries(assignQueue)) {
@@ -1390,34 +1422,79 @@ alert(
 
     const modalEl = document.getElementById('assignModal');
     const modal = bootstrap.Modal.getInstance(modalEl);
-    modal.hide();
+    const confirmBtn = document.getElementById('assign-confirm-btn');
+    if (confirmBtn) {
+      confirmBtn.disabled = true;
+      confirmBtn.textContent = 'Saving...';
+    }
     showStatus("Assigning...", false);
+
+    let pending = moves.length;
+    let failed = false;
+
+    const finish = () => {
+      if (confirmBtn) {
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = 'Confirm Move ➔';
+      }
+    };
 
     moves.forEach(m => {
       const safeProd = norm(m.prod);
+      google.script.run
+        .withSuccessHandler((res) => {
+          const failedRes = typeof res === 'string' && res.toUpperCase().indexOf('ERROR') === 0;
+          if (failedRes) {
+            failed = true;
+            console.error('assignToRoom rejected:', res);
+          }
 
-      const bucket = rawData[currentOrder].delivery.bucket || {};
-      if (!bucket[safeProd]) bucket[safeProd] = { qty: 0 };
-      bucket[safeProd].qty -= m.qty;
-      rawData[currentOrder].delivery.bucket = bucket;
+          if (!failedRes) {
+            const bucket = rawData[currentOrder].delivery.bucket || {};
+            if (!bucket[safeProd]) bucket[safeProd] = { qty: 0 };
+            bucket[safeProd].qty -= m.qty;
+            if (bucket[safeProd].qty <= 0) delete bucket[safeProd];
+            rawData[currentOrder].delivery.bucket = bucket;
 
-      if (!rawData[currentOrder].delivery.rooms) rawData[currentOrder].delivery.rooms = {};
-      if (!rawData[currentOrder].delivery.rooms[roomName]) rawData[currentOrder].delivery.rooms[roomName] = [];
+            if (!rawData[currentOrder].delivery.rooms) rawData[currentOrder].delivery.rooms = {};
+            if (!rawData[currentOrder].delivery.rooms[roomName]) rawData[currentOrder].delivery.rooms[roomName] = [];
 
-      const roomItems = rawData[currentOrder].delivery.rooms[roomName];
-      const existing = roomItems.find(i => norm(i.name) === safeProd && norm(i.status) === 'Pending');
-      if (existing) existing.qty = (Number(existing.qty) || 0) + m.qty;
-      else roomItems.push({ name: safeProd, qty: m.qty, status: 'Pending' });
+            const roomItems = rawData[currentOrder].delivery.rooms[roomName];
+            const existing = roomItems.find(i => norm(i.name) === safeProd && norm(i.status) === 'Pending');
+            if (existing) existing.qty = (Number(existing.qty) || 0) + m.qty;
+            else roomItems.push({ name: safeProd, qty: m.qty, status: 'Pending' });
+          }
 
-      google.script.run.assignToRoom(currentOrder, safeProd, m.qty, roomName);
+          pending--;
+          if (pending === 0) {
+            finish();
+            if (failed) {
+              showStatus('Assignment failed. Refreshing data...', false);
+              google.script.run.withSuccessHandler(onDataLoad).getDataTree();
+              alert('Some assignments failed to save. Data has been refreshed from server.');
+              return;
+            }
+
+            modal.hide();
+            showStatus('Assigned!', true);
+            renderBucket();
+            renderRooms();
+            renderDeliverySummary();
+          }
+        })
+        .withFailureHandler((err) => {
+          failed = true;
+          console.error('assignToRoom error:', err);
+          pending--;
+          if (pending === 0) {
+            finish();
+            showStatus('Assignment failed. Refreshing data...', false);
+            google.script.run.withSuccessHandler(onDataLoad).getDataTree();
+            alert('Some assignments failed to save. Data has been refreshed from server.');
+          }
+        })
+        .assignToRoom(currentOrder, safeProd, m.qty, roomName);
     });
-
-    setTimeout(() => {
-        showStatus("Assigned!", true);
-        renderBucket();
-        renderRooms();
-        renderDeliverySummary();
-    }, 500);
   }
 
   // --- 5. MANUFACTURING RENDERERS ---
