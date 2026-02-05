@@ -846,6 +846,8 @@ function getSmartOrderSummary(orderId) {
     return {
       productName: line.productName,
       sku: line.sku,
+      qtyRequired: line.qtyOrdered,
+      qtyAllocated: line.allocated,
       toBuild: line.toBuild,
       components,
       wood,
@@ -931,6 +933,16 @@ function exportSmartOrderToSheets(orderId) {
   summarySheet.getRange(row++, 1).setValue(`Total units to build: ${summary.totalToBuild || 0}`);
   summarySheet.getRange(row++, 1).setValue(`Generated: ${generatedOn}`);
   row += 1;
+
+  row = _writeSmartOrderTableSection_(summarySheet, row, "ORDER PRODUCTS", ["Product Name", "Product SKU", "Quantity Required", "Quantity Allocated", "Quantity to Build"],
+    (summary.products || []).map(prod => [
+      prod.productName || "",
+      prod.sku || "",
+      Number(prod.qtyRequired) || 0,
+      Number(prod.qtyAllocated) || 0,
+      Number(prod.toBuild) || 0
+    ])
+  );
 
   row = _writeSmartOrderTableSection_(summarySheet, row, "TOTAL WOOD REQUIREMENTS", ["Material", "Type", "Sheet Size", "Area (m²)", "Sheets Req", "In Stock", "Needed"],
     (summary.totals && summary.totals.wood ? summary.totals.wood : []).map(item => [
