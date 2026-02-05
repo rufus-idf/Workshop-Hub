@@ -48,35 +48,40 @@
   </div>
 
   <div id="view-jobs">
-    <div class="app-header position-relative d-flex align-items-center justify-content-between" style="min-height: 60px; padding-bottom: 10px;">
-      
-      <img src="https://i-designfurniture.com/wp-content/uploads/2018/04/image.png" alt="Logo" style="height: 80px; width: auto; object-fit: contain;">
+    <div class="app-header admin-header position-relative">
+      <div class="header-left d-flex align-items-center gap-2">
+        <img src="<?= logoDataUri ?>" alt="i-Design Furniture Logo" class="admin-logo" onerror="this.onerror=null;this.src='https://i-designfurniture.com/wp-content/uploads/2018/04/image.png';">
+        <button class="btn btn-outline-dark rounded-circle refresh-icon-btn" onclick="reloadAllData()" aria-label="Refresh">
+          ↻
+        </button>
+      </div>
 
       <div class="text-center position-absolute start-50 translate-middle-x">
         <h2 class="mb-0" style="white-space: nowrap;">
           Workshop<span style="color:var(--color-cut)">Hub</span>
         </h2>
-        <div class="d-flex gap-2 justify-content-center mt-2 flex-wrap">
-  <button class="btn btn-sm btn-outline-dark rounded-pill px-3" onclick="openStockLists()">📦 Stock Lists</button>
-  <button class="btn btn-sm btn-outline-dark rounded-pill px-3" onclick="reloadAllData()">↻ Refresh</button>
-  <button class="btn btn-sm btn-outline-dark rounded-pill px-3 position-relative" onclick="openShopifyOrders()">
-    🛒 Orders
-    <span id="order-badge" class="position-absolute top-0 start-100 translate-middle p-1 bg-danger border border-light rounded-circle hidden">
-      <span class="visually-hidden">New alerts</span>
-    </span>
-  </button>
-</div>
       </div>
 
-      <span class="badge bg-white text-dark shadow-sm py-2 px-3 rounded-pill" id="date-badge">Today</span>
-      <span id="health-badge" class="badge bg-success ms-2" title="Server status">Online</span>
-      
+      <div class="header-right d-flex align-items-center justify-content-end gap-2">
+        <span class="badge bg-white text-dark shadow-sm py-2 px-3 rounded-pill" id="date-badge">Today</span>
+        <span id="health-badge" class="badge bg-success" title="Server status">Online</span>
+      </div>
+    </div>
+
+    <div class="header-action-row">
+      <button class="btn btn-outline-dark header-action-btn" onclick="openStockLists()">📦 Stock Lists</button>
+      <button class="btn btn-outline-dark header-action-btn position-relative" onclick="openShopifyOrders()">
+        🛒 Orders
+        <span id="order-badge" class="position-absolute top-0 start-100 translate-middle p-1 bg-danger border border-light rounded-circle hidden">
+          <span class="visually-hidden">New alerts</span>
+        </span>
+      </button>
     </div>
 
     <ul class="nav-segment mt-3">
       <a class="nav-link" id="tab-stock" onclick="switchTab('stock')">Stock Builds</a>
       <a class="nav-link active" id="tab-active" onclick="switchTab('active')">Client Jobs</a>
-      <a class="nav-link" id="tab-history" onclick="switchTab('history')">History</a>
+      <a class="nav-link" id="tab-history" onclick="switchTab('history')">Completed</a>
     </ul>
     <div id="job-list"></div>
     <div id="loading" class="text-center mt-5"><div class="spinner-border text-secondary"></div></div>

@@ -47,6 +47,84 @@
     
     /* APP HEADER */
     .app-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; padding-top: 10px; }
+
+    .admin-header {
+      min-height: 112px;
+      padding-bottom: 8px;
+      gap: 10px;
+      flex-wrap: nowrap;
+    }
+
+    .admin-header .header-left,
+    .admin-header .header-right {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .admin-logo {
+      height: 104px;
+      width: auto;
+      object-fit: contain;
+    }
+
+    .refresh-icon-btn {
+      width: 20px;
+      height: 20px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.7rem;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    .header-action-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin: 0 0 16px;
+    }
+
+    .header-action-btn {
+      width: 100%;
+      border-radius: 14px;
+      min-height: 44px;
+      font-weight: 700;
+      font-size: 1rem;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    @media (max-width: 768px) {
+      .admin-header {
+        min-height: 92px;
+      }
+
+      .admin-logo {
+        height: 84px;
+      }
+
+      .admin-header h2 {
+        font-size: 1.45rem;
+      }
+
+      .admin-header .badge {
+        font-size: 0.7rem;
+        padding: 0.3rem 0.5rem;
+      }
+
+      .header-action-row {
+        gap: 10px;
+      }
+
+      .header-action-btn {
+        min-height: 42px;
+        font-size: 0.95rem;
+      }
+    }
     
     /* STICKY HEADER (Keeps Project Name at top) */
     .sticky-top-bar {
