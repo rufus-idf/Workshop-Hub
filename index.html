@@ -30,7 +30,12 @@
           <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
         <div class="modal-body">
-            <label class="small text-muted mb-1">ROOM NAME / NUMBER</label>
+            <label class="small text-muted mb-1">CHOOSE EXISTING ROOM</label>
+            <select id="existing-room-select" class="form-select form-control-lg mb-3 fw-bold">
+              <option value="">+ Create / type a new room below</option>
+            </select>
+
+            <label class="small text-muted mb-1">OR NEW ROOM NAME / NUMBER</label>
             <input type="text" id="new-room-name" class="form-control form-control-lg mb-4 fw-bold" placeholder="e.g. Room 101">
             <h6 class="fw-bold mb-3">Select Items from Bucket</h6>
             <div id="assign-list"></div>

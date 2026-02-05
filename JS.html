@@ -1321,10 +1321,28 @@ alert(
   // --- 4. ASSIGN MODAL ---
   function openAssignModal() {
     const bucket = rawData[currentOrder].delivery.bucket || {};
+    const rooms = rawData[currentOrder]?.delivery?.rooms || {};
     const list = document.getElementById('assign-list');
     list.innerHTML = '';
-    assignQueue = {}; 
-    document.getElementById('new-room-name').value = '';
+    assignQueue = {};
+
+    const roomInput = document.getElementById('new-room-name');
+    const roomSelect = document.getElementById('existing-room-select');
+    roomInput.value = '';
+    roomSelect.innerHTML = '<option value="">+ Create / type a new room below</option>';
+
+    Object.keys(rooms)
+      .sort((a, b) => String(a).localeCompare(String(b)))
+      .forEach(room => {
+        const opt = document.createElement('option');
+        opt.value = room;
+        opt.textContent = room;
+        roomSelect.appendChild(opt);
+      });
+
+    roomSelect.onchange = () => {
+      if (roomSelect.value) roomInput.value = roomSelect.value;
+    };
 
     if(Object.keys(bucket).length === 0) {
         list.innerHTML = '<div class="text-center text-muted">Nothing in bucket to assign!</div>';
@@ -1358,9 +1376,12 @@ alert(
   }
 
   function commitAssignment() {
-    const roomName = norm(document.getElementById('new-room-name').value);
-    if(!roomName) { alert("Please enter a Room Name"); return; }
-    
+    const selectedRoom = norm(document.getElementById('existing-room-select')?.value);
+    const typedRoom = norm(document.getElementById('new-room-name').value);
+    const roomName = selectedRoom || typedRoom;
+
+    if(!roomName) { alert("Please choose an existing room or enter a new Room Name"); return; }
+
     let moves = [];
     for(const [prod, qty] of Object.entries(assignQueue)) {
         if(qty > 0) moves.push({ prod: prod, qty: qty });
@@ -1373,20 +1394,22 @@ alert(
     showStatus("Assigning...", false);
 
     moves.forEach(m => {
-        const safeProd = norm(m.prod);
+      const safeProd = norm(m.prod);
 
-const bucket = rawData[currentOrder].delivery.bucket || {};
-if (!bucket[safeProd]) bucket[safeProd] = { qty: 0 };
-bucket[safeProd].qty -= m.qty;
-rawData[currentOrder].delivery.bucket = bucket;
+      const bucket = rawData[currentOrder].delivery.bucket || {};
+      if (!bucket[safeProd]) bucket[safeProd] = { qty: 0 };
+      bucket[safeProd].qty -= m.qty;
+      rawData[currentOrder].delivery.bucket = bucket;
 
+      if (!rawData[currentOrder].delivery.rooms) rawData[currentOrder].delivery.rooms = {};
+      if (!rawData[currentOrder].delivery.rooms[roomName]) rawData[currentOrder].delivery.rooms[roomName] = [];
 
-if (!rawData[currentOrder].delivery.rooms) rawData[currentOrder].delivery.rooms = {};
-if (!rawData[currentOrder].delivery.rooms[roomName]) rawData[currentOrder].delivery.rooms[roomName] = [];
+      const roomItems = rawData[currentOrder].delivery.rooms[roomName];
+      const existing = roomItems.find(i => norm(i.name) === safeProd && norm(i.status) === 'Pending');
+      if (existing) existing.qty = (Number(existing.qty) || 0) + m.qty;
+      else roomItems.push({ name: safeProd, qty: m.qty, status: 'Pending' });
 
-rawData[currentOrder].delivery.rooms[roomName].push({ name: safeProd, qty: m.qty, status: 'Pending' });
-
-google.script.run.assignToRoom(currentOrder, safeProd, m.qty, roomName);
+      google.script.run.assignToRoom(currentOrder, safeProd, m.qty, roomName);
     });
 
     setTimeout(() => {
