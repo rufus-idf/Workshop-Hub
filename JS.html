@@ -74,9 +74,27 @@ function setHealthBadge(isOnline) {
 }
 
 // POLLING FOR NEW ORDERS
-function setOrderPendingIndicator(pendingCount) {
-  const count = Number(pendingCount) || 0;
-  const hasPending = count > 0;
+function summarizePendingOrders(rows) {
+  const safeRows = Array.isArray(rows) ? rows : [];
+  const unique = new Set();
+
+  safeRows.forEach(r => {
+    const orderId = String((r && r.orderId) || "").trim().toLowerCase();
+    const customer = String((r && r.customer) || "").trim().toLowerCase();
+    if (!orderId) return;
+    unique.add(`${orderId}|||${customer}`);
+  });
+
+  return {
+    orderCount: unique.size,
+    lineCount: safeRows.length
+  };
+}
+
+function setOrderPendingIndicator(summary) {
+  const orderCount = Number(summary && summary.orderCount) || 0;
+  const lineCount = Number(summary && summary.lineCount) || 0;
+  const hasPending = orderCount > 0;
 
   const badge = document.getElementById("order-badge");
   if (badge) badge.classList.toggle("hidden", !hasPending);
@@ -84,7 +102,8 @@ function setOrderPendingIndicator(pendingCount) {
   const pill = document.getElementById("order-pending-pill");
   if (pill) {
     if (hasPending) {
-      pill.textContent = `${count} waiting`;
+      const orderWord = orderCount === 1 ? "order" : "orders";
+      pill.textContent = `${orderCount} ${orderWord} waiting`;
       pill.classList.remove("hidden");
     } else {
       pill.classList.add("hidden");
@@ -93,22 +112,26 @@ function setOrderPendingIndicator(pendingCount) {
 
   const banner = document.getElementById("orders-pending-banner");
   const countEl = document.getElementById("orders-pending-count");
+  const linesEl = document.getElementById("orders-pending-lines");
   if (banner && countEl) {
-    countEl.textContent = String(count);
+    countEl.textContent = String(orderCount);
     banner.classList.toggle("hidden", !hasPending);
+  }
+  if (linesEl) {
+    const lineWord = lineCount === 1 ? "line item" : "line items";
+    linesEl.textContent = `(${lineCount} ${lineWord})`;
   }
 
   const btn = document.getElementById("orders-btn");
   if (btn) btn.classList.toggle("pending-attention", hasPending);
 }
-
 function checkOrderBadge() {
   google.script.run
     .withSuccessHandler(rows => {
-      setOrderPendingIndicator((rows || []).length);
+      setOrderPendingIndicator(summarizePendingOrders(rows));
     })
     .withFailureHandler(() => {
-      setOrderPendingIndicator(0);
+      setOrderPendingIndicator({ orderCount: 0, lineCount: 0 });
     })
     .getPendingShopifyOrdersWithStock();
 }
@@ -2729,7 +2752,7 @@ function refreshShopifyOrdersModal() {
   google.script.run
     .withSuccessHandler(rows => {
       const safeRows = rows || [];
-      setOrderPendingIndicator(safeRows.length);
+      setOrderPendingIndicator(summarizePendingOrders(safeRows));
       renderShopifyOrdersModal(safeRows);
     })
     .withFailureHandler(err => {
