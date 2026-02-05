@@ -2749,6 +2749,40 @@ function renderShopifyOrdersModal(rows) {
   listEl.innerHTML = html;
 }
 
+function runSmartOrderAuthorization(orderId) {
+  const bodyEl = document.getElementById("smart-order-body");
+  if (bodyEl) {
+    bodyEl.innerHTML = `<div class="text-center text-muted py-4"><div class="spinner-border"></div><div class="mt-2">Checking authorization…</div></div>`;
+  }
+
+  google.script.run
+    .withSuccessHandler(result => {
+      const statusMsg = escHtml(result && result.message ? result.message : "Authorization check completed.");
+      const detail = result && result.orderId
+        ? `<div class="small text-muted mt-1">Sample order used: <code>${escHtml(result.orderId)}</code></div>`
+        : "";
+      if (bodyEl) {
+        bodyEl.innerHTML = `
+          <div class="alert alert-success mb-3">${statusMsg}${detail}</div>
+          <div class="text-center">
+            <button class="btn btn-dark btn-sm rounded-pill" onclick="openSmartOrder(${jsStr(orderId)})">Retry Smart Order</button>
+          </div>
+        `;
+      }
+      openSmartOrder(orderId);
+    })
+    .withFailureHandler(err => {
+      const message = err && err.message ? err.message : "Authorization check failed.";
+      if (bodyEl) {
+        bodyEl.innerHTML = `
+          <div class="text-danger">${escHtml(message)}</div>
+          <div class="small text-muted mt-2">Open Apps Script editor → select <code>authorizeSmartOrderAccess</code> → Run.</div>
+        `;
+      }
+    })
+    .authorizeSmartOrderAccess();
+}
+
 function openSmartOrder(orderId) {
   const modalEl = document.getElementById("smartOrderModal");
   const bodyEl = document.getElementById("smart-order-body");
@@ -2779,19 +2813,26 @@ function openSmartOrder(orderId) {
     bodyEl.innerHTML = `
       <div class="alert alert-warning mb-0">
         <strong>Waiting for Google authorization…</strong><br>
-        If nothing opens, run <code>authorizeSmartOrderAccess</code> once in the Apps Script editor,
-        then try Smart Order again.
+        If nothing opens, click <strong>Run Authorization Check</strong> below.
+      </div>
+      <div class="d-flex gap-2 mt-3">
+        <button class="btn btn-dark btn-sm rounded-pill" type="button" onclick="runSmartOrderAuthorization(${jsStr(orderId)})">Run Authorization Check</button>
+        <button class="btn btn-outline-dark btn-sm rounded-pill" type="button" onclick="openSmartOrder(${jsStr(orderId)})">Retry</button>
       </div>
     `;
   }, 5000);
 
+  console.log("[SmartOrder] requesting summary", { orderId });
+
   google.script.run
     .withSuccessHandler(data => {
+      console.log("[SmartOrder] summary success", data);
       rpcCompleted = true;
       clearTimeout(authDialogTimeout);
       renderSmartOrderModal(data);
     })
     .withFailureHandler(err => {
+      console.error("[SmartOrder] summary failed", err);
       rpcCompleted = true;
       clearTimeout(authDialogTimeout);
       const message = err && err.message ? err.message : "Unknown error.";
