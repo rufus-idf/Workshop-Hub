@@ -2773,11 +2773,27 @@ function openSmartOrder(orderId) {
   bodyEl.innerHTML = `<div class="text-center text-muted py-5"><div class="spinner-border"></div></div>`;
   smartOrderModalInst.show();
 
+  let rpcCompleted = false;
+  const authDialogTimeout = setTimeout(() => {
+    if (rpcCompleted) return;
+    bodyEl.innerHTML = `
+      <div class="alert alert-warning mb-0">
+        <strong>Waiting for Google authorization…</strong><br>
+        If nothing opens, run <code>authorizeSmartOrderAccess</code> once in the Apps Script editor,
+        then try Smart Order again.
+      </div>
+    `;
+  }, 5000);
+
   google.script.run
     .withSuccessHandler(data => {
+      rpcCompleted = true;
+      clearTimeout(authDialogTimeout);
       renderSmartOrderModal(data);
     })
     .withFailureHandler(err => {
+      rpcCompleted = true;
+      clearTimeout(authDialogTimeout);
       const message = err && err.message ? err.message : "Unknown error.";
       const lowerMsg = String(message).toLowerCase();
       const authHint = lowerMsg.includes("authorization") || lowerMsg.includes("authorize")
@@ -2787,7 +2803,7 @@ function openSmartOrder(orderId) {
         ? `<div class="alert alert-warning mt-3">
             <strong>Authorization needed.</strong>
             This feature reads from external sheets. Please open the Apps Script project,
-            run <code>getSmartOrderSummary</code> once, and complete the Google authorization flow.
+            run <code>authorizeSmartOrderAccess</code> once, and complete the Google authorization flow.
             Also confirm the executing account has access to the Shopify Orders + Product Recipe sheets.
           </div>`
         : "";
