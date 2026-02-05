@@ -2712,12 +2712,12 @@ function renderShopifyOrdersModal(rows) {
             <div class="d-flex gap-1 flex-shrink-0">
               <button class="btn btn-outline-dark btn-sm rounded-pill"
                       type="button"
-                      onclick="openSmartOrder(${jsStr(g.orderId)})">
+                      onclick='openSmartOrder(${jsStr(g.orderId)})'>
                 🧠 Smart Order
               </button>
               <button class="btn btn-dark btn-sm rounded-pill"
                       type="button"
-                      onclick="runSmartOrderAuthorization(${jsStr(g.orderId)})">
+                      onclick='runSmartOrderAuthorization(${jsStr(g.orderId)})'>
                 🔐 Authorize
               </button>
             </div>
@@ -2774,7 +2774,7 @@ function runSmartOrderAuthorization(orderId) {
         bodyEl.innerHTML = `
           <div class="alert alert-success mb-3">${statusMsg}${detail}</div>
           <div class="text-center">
-            <button class="btn btn-dark btn-sm rounded-pill" onclick="openSmartOrder(${jsStr(orderId)})">Retry Smart Order</button>
+            <button class="btn btn-dark btn-sm rounded-pill" onclick='openSmartOrder(${jsStr(orderId)})'>Retry Smart Order</button>
           </div>
         `;
       } else {
@@ -2821,8 +2821,8 @@ function openSmartOrder(orderId) {
       <div class="mt-2">Loading Smart Order…</div>
     </div>
     <div class="d-flex gap-2 justify-content-center mt-2">
-      <button class="btn btn-dark btn-sm rounded-pill" type="button" onclick="runSmartOrderAuthorization(${jsStr(orderId)})">Run Authorization Check</button>
-      <button class="btn btn-outline-dark btn-sm rounded-pill" type="button" onclick="openSmartOrder(${jsStr(orderId)})">Retry</button>
+      <button class="btn btn-dark btn-sm rounded-pill" type="button" onclick='runSmartOrderAuthorization(${jsStr(orderId)})'>Run Authorization Check</button>
+      <button class="btn btn-outline-dark btn-sm rounded-pill" type="button" onclick='openSmartOrder(${jsStr(orderId)})'>Retry</button>
     </div>
   `;
   smartOrderModalInst.show();
@@ -2836,8 +2836,8 @@ function openSmartOrder(orderId) {
         If nothing opens, click <strong>Run Authorization Check</strong> below.
       </div>
       <div class="d-flex gap-2 mt-3">
-        <button class="btn btn-dark btn-sm rounded-pill" type="button" onclick="runSmartOrderAuthorization(${jsStr(orderId)})">Run Authorization Check</button>
-        <button class="btn btn-outline-dark btn-sm rounded-pill" type="button" onclick="openSmartOrder(${jsStr(orderId)})">Retry</button>
+        <button class="btn btn-dark btn-sm rounded-pill" type="button" onclick='runSmartOrderAuthorization(${jsStr(orderId)})'>Run Authorization Check</button>
+        <button class="btn btn-outline-dark btn-sm rounded-pill" type="button" onclick='openSmartOrder(${jsStr(orderId)})'>Retry</button>
       </div>
     `;
   }, 5000);
