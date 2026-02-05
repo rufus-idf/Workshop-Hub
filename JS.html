@@ -2804,7 +2804,16 @@ function openSmartOrder(orderId) {
   }
 
   titleEl.innerText = `Smart Order • #${orderId}`;
-  bodyEl.innerHTML = `<div class="text-center text-muted py-5"><div class="spinner-border"></div></div>`;
+  bodyEl.innerHTML = `
+    <div class="text-center text-muted py-4">
+      <div class="spinner-border"></div>
+      <div class="mt-2">Loading Smart Order…</div>
+    </div>
+    <div class="d-flex gap-2 justify-content-center mt-2">
+      <button class="btn btn-dark btn-sm rounded-pill" type="button" onclick="runSmartOrderAuthorization(${jsStr(orderId)})">Run Authorization Check</button>
+      <button class="btn btn-outline-dark btn-sm rounded-pill" type="button" onclick="openSmartOrder(${jsStr(orderId)})">Retry</button>
+    </div>
+  `;
   smartOrderModalInst.show();
 
   let rpcCompleted = false;
