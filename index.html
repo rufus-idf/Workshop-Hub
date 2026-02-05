@@ -563,12 +563,17 @@
 <div class="modal fade" id="smartOrderModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-fullscreen modal-dialog-scrollable">
     <div class="modal-content border-0 shadow">
-      <div class="modal-header border-0 pb-0">
+      <div class="modal-header border-0 pb-0 d-flex justify-content-between align-items-start gap-2">
         <div>
           <h5 class="modal-title fw-bold" id="smart-order-title">Smart Order</h5>
           <small class="text-muted" id="smart-order-subtitle">Loading...</small>
         </div>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        <div class="d-flex align-items-center gap-2">
+          <button type="button" id="smart-order-export-btn" class="btn btn-dark btn-sm rounded-pill" onclick="exportSmartOrder()" disabled>
+            📄 Export to Google Sheets
+          </button>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
       </div>
 
       <div class="modal-body" id="smart-order-body">
