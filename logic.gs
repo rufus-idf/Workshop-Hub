@@ -908,6 +908,150 @@ function getSmartOrderSummary(orderId) {
 
 
 
+function exportSmartOrderToSheets(orderId) {
+  const summary = getSmartOrderSummary(orderId);
+  if (!summary || !summary.products || summary.products.length === 0) {
+    throw new Error("No Smart Order items to export for this order.");
+  }
+
+  const tz = Session.getScriptTimeZone();
+  const timestamp = Utilities.formatDate(new Date(), tz, "yyyy-MM-dd HH:mm");
+  const fileName = `Smart Order - ${summary.orderId} - ${timestamp}`;
+
+  const out = SpreadsheetApp.create(fileName);
+  const summarySheet = out.getSheets()[0];
+  summarySheet.setName("Summary");
+
+  const generatedOn = Utilities.formatDate(new Date(), tz, "dd/MM/yyyy HH:mm");
+  let row = 1;
+
+  summarySheet.getRange(row++, 1).setValue("Smart Order Export").setFontWeight("bold").setFontSize(14);
+  summarySheet.getRange(row++, 1).setValue(`Order ID: ${summary.orderId}`);
+  summarySheet.getRange(row++, 1).setValue(`Customer: ${summary.customer || "Unknown"}`);
+  summarySheet.getRange(row++, 1).setValue(`Total units to build: ${summary.totalToBuild || 0}`);
+  summarySheet.getRange(row++, 1).setValue(`Generated: ${generatedOn}`);
+  row += 1;
+
+  row = _writeSmartOrderTableSection_(summarySheet, row, "TOTAL WOOD REQUIREMENTS", ["Material", "Type", "Sheet Size", "Area (m²)", "Sheets Req", "In Stock", "Needed"],
+    (summary.totals && summary.totals.wood ? summary.totals.wood : []).map(item => [
+      item.material,
+      item.type,
+      item.type === "mdf" ? (summary.sheetSizes && summary.sheetSizes.mdf ? summary.sheetSizes.mdf : "2800 x 2070mm")
+        : item.type === "ply" ? (summary.sheetSizes && summary.sheetSizes.ply ? summary.sheetSizes.ply : "3050 x 1220mm")
+        : "",
+      Number(item.area) || 0,
+      Number(item.sheetsNeeded) || 0,
+      Number(item.stockSheets) || 0,
+      Number(item.shortSheets) || 0
+    ])
+  );
+
+  row = _writeSmartOrderTableSection_(summarySheet, row, "TOTAL EDGE REQUIREMENTS", ["Material", "Meters", `Rolls (${summary.edgeRollMeters || 75}m)`, "In Stock", "Needed"],
+    (summary.totals && summary.totals.edge ? summary.totals.edge : []).map(item => [
+      item.material,
+      Number(item.meters) || 0,
+      Number(item.rollsNeeded) || 0,
+      Number(item.stockRolls) || 0,
+      Number(item.shortRolls) || 0
+    ])
+  );
+
+  _writeSmartOrderTableSection_(summarySheet, row, "TOTAL COMPONENT REQUIREMENTS", ["Component", "Qty Req", "In Stock", "Needed"],
+    (summary.totals && summary.totals.components ? summary.totals.components : []).map(item => [
+      item.name,
+      Number(item.qty) || 0,
+      Number(item.stock) || 0,
+      Number(item.short) || 0
+    ])
+  );
+
+  (summary.products || []).forEach((prod, idx) => {
+    const sheetName = _smartOrderSheetName_(`${idx + 1}. ${prod.productName || prod.sku || "Product"}`);
+    const sh = out.insertSheet(sheetName);
+    let r = 1;
+
+    sh.getRange(r++, 1).setValue("Smart Order Product Breakdown").setFontWeight("bold").setFontSize(13);
+    sh.getRange(r++, 1).setValue(`Order ID: ${summary.orderId}`);
+    sh.getRange(r++, 1).setValue(`Customer: ${summary.customer || "Unknown"}`);
+    sh.getRange(r++, 1).setValue(`Product: ${prod.productName || prod.sku || "Unknown"}`);
+    sh.getRange(r++, 1).setValue(`SKU: ${prod.sku || ""}`);
+    sh.getRange(r++, 1).setValue(`Units to build: ${Number(prod.toBuild) || 0}`);
+    sh.getRange(r++, 1).setValue(`Generated: ${generatedOn}`);
+    r += 1;
+
+    r = _writeSmartOrderTableSection_(sh, r, "WOOD", ["Material", "Type", "Sheet Size", "Area (m²)", "Sheets Req", "In Stock", "Needed"],
+      (prod.wood || []).map(item => [
+        item.material,
+        item.type,
+        item.type === "mdf" ? (summary.sheetSizes && summary.sheetSizes.mdf ? summary.sheetSizes.mdf : "2800 x 2070mm")
+          : item.type === "ply" ? (summary.sheetSizes && summary.sheetSizes.ply ? summary.sheetSizes.ply : "3050 x 1220mm")
+          : "",
+        Number(item.area) || 0,
+        Number(item.sheetsNeeded) || 0,
+        Number(item.stockSheets) || 0,
+        Number(item.shortSheets) || 0
+      ])
+    );
+
+    r = _writeSmartOrderTableSection_(sh, r, "EDGEBAND", ["Material", "Meters", `Rolls (${summary.edgeRollMeters || 75}m)`, "In Stock", "Needed"],
+      (prod.edge || []).map(item => [
+        item.material,
+        Number(item.meters) || 0,
+        Number(item.rollsNeeded) || 0,
+        Number(item.stockRolls) || 0,
+        Number(item.shortRolls) || 0
+      ])
+    );
+
+    _writeSmartOrderTableSection_(sh, r, "COMPONENTS", ["Component", "Qty Req", "In Stock", "Needed"],
+      (prod.components || []).map(item => [
+        item.name,
+        Number(item.qty) || 0,
+        Number(item.stock) || 0,
+        Number(item.short) || 0
+      ])
+    );
+
+    sh.autoResizeColumns(1, 7);
+  });
+
+  summarySheet.autoResizeColumns(1, 7);
+
+  return {
+    spreadsheetId: out.getId(),
+    url: out.getUrl(),
+    name: out.getName()
+  };
+}
+
+function _writeSmartOrderTableSection_(sheet, startRow, title, headers, rows) {
+  let row = startRow;
+  sheet.getRange(row, 1).setValue(title).setFontWeight("bold");
+  row += 1;
+
+  if (!rows || rows.length === 0) {
+    sheet.getRange(row, 1).setValue("No items.").setFontStyle("italic").setFontColor("#666666");
+    return row + 2;
+  }
+
+  sheet.getRange(row, 1, 1, headers.length).setValues([headers]).setFontWeight("bold").setBackground("#f1f3f4");
+  row += 1;
+
+  sheet.getRange(row, 1, rows.length, headers.length).setValues(rows);
+  sheet.getRange(row, 1, rows.length, headers.length).setBorder(true, true, true, true, true, true, "#dddddd", SpreadsheetApp.BorderStyle.SOLID);
+
+  return row + rows.length + 2;
+}
+
+function _smartOrderSheetName_(name) {
+  const cleaned = String(name || "Product")
+    .replace(/[\\/?*\[\]:]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned.substring(0, 99) || "Product";
+}
+
+
 function approveShopifyOrder(shopifyRowIndex) {
   const sh = _getShopifyOrdersSheet();
   const headers = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(h => _normTxt(h).toLowerCase());
