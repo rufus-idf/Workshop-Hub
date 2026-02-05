@@ -74,16 +74,43 @@ function setHealthBadge(isOnline) {
 }
 
 // POLLING FOR NEW ORDERS
+function setOrderPendingIndicator(pendingCount) {
+  const count = Number(pendingCount) || 0;
+  const hasPending = count > 0;
+
+  const badge = document.getElementById("order-badge");
+  if (badge) badge.classList.toggle("hidden", !hasPending);
+
+  const pill = document.getElementById("order-pending-pill");
+  if (pill) {
+    if (hasPending) {
+      pill.textContent = `${count} waiting`;
+      pill.classList.remove("hidden");
+    } else {
+      pill.classList.add("hidden");
+    }
+  }
+
+  const banner = document.getElementById("orders-pending-banner");
+  const countEl = document.getElementById("orders-pending-count");
+  if (banner && countEl) {
+    countEl.textContent = String(count);
+    banner.classList.toggle("hidden", !hasPending);
+  }
+
+  const btn = document.getElementById("orders-btn");
+  if (btn) btn.classList.toggle("pending-attention", hasPending);
+}
+
 function checkOrderBadge() {
   google.script.run
-    .withSuccessHandler(hasPending => {
-      const badge = document.getElementById("order-badge");
-      if (badge) {
-         if (hasPending) badge.classList.remove("hidden");
-         else badge.classList.add("hidden");
-      }
+    .withSuccessHandler(rows => {
+      setOrderPendingIndicator((rows || []).length);
     })
-    .hasPendingOrders();
+    .withFailureHandler(() => {
+      setOrderPendingIndicator(0);
+    })
+    .getPendingShopifyOrdersWithStock();
 }
 
 // Add this to your existing startHealthMonitor function
@@ -170,6 +197,7 @@ google.script.run
    mergeWorkshopStockOrders();
    console.log("Data Loaded", rawData);
    renderJobs();
+   checkOrderBadge();
 
   mountBreadcrumb("view-jobs");
   updateBreadcrumbsForView("view-jobs");
@@ -2700,7 +2728,9 @@ function refreshShopifyOrdersModal() {
 
   google.script.run
     .withSuccessHandler(rows => {
-      renderShopifyOrdersModal(rows || []);
+      const safeRows = rows || [];
+      setOrderPendingIndicator(safeRows.length);
+      renderShopifyOrdersModal(safeRows);
     })
     .withFailureHandler(err => {
       if (listEl) listEl.innerHTML = `<div class="text-danger">Error: ${err.message}</div>`;
