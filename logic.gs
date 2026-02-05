@@ -628,11 +628,30 @@ function _classifyMaterial_(material) {
 }
 
 function getSmartOrderSummary(orderId) {
-  const targetOrderId = _normTxt(orderId);
-  if (!targetOrderId) throw new Error("Order ID is required.");
-
   const orderSheet = _getShopifyOrdersSheet();
   const orderValues = orderSheet.getDataRange().getValues();
+
+  let targetOrderId = _normTxt(orderId);
+  if (!targetOrderId) {
+    if (orderValues.length < 2) throw new Error("Order ID is required. Shopify Orders has no data rows.");
+
+    const headers = orderValues[0].map(h => _normTxt(h).toLowerCase());
+    const hm = _headerMap_(headers);
+    const idxOrderId = hm["order id"];
+    if (idxOrderId == null) {
+      throw new Error("Shopify Orders headers don't match expected names. Missing 'Order ID'.");
+    }
+
+    for (let r = 1; r < orderValues.length; r++) {
+      const candidateOrderId = _normTxt(orderValues[r][idxOrderId]);
+      if (candidateOrderId) {
+        targetOrderId = candidateOrderId;
+        break;
+      }
+    }
+
+    if (!targetOrderId) throw new Error("Order ID is required. No non-empty Order ID values were found.");
+  }
   if (orderValues.length < 2) return { orderId: targetOrderId, products: [], totals: {}, totalToBuild: 0 };
 
   const headers = orderValues[0].map(h => _normTxt(h).toLowerCase());
@@ -1974,4 +1993,46 @@ function getColumnMap(sheet) {
     map[String(h).trim().toLowerCase()] = i + 1; // Store 1-based index
   });
   return map;
+}
+
+function authorizeSmartOrderAccess() {
+  const orderSheet = _getShopifyOrdersSheet();
+  const values = orderSheet.getDataRange().getValues();
+
+  if (values.length < 2) {
+    SpreadsheetApp.openById(PRODUCT_RECIPE_SHEET_ID).getSheetByName(PRODUCT_RECIPE_TAB_NAME);
+    return {
+      ok: true,
+      message: "Authorization completed. Shopify Orders has no data rows yet."
+    };
+  }
+
+  const headers = values[0].map(h => _normTxt(h).toLowerCase());
+  const hm = _headerMap_(headers);
+  const idxOrderId = hm["order id"];
+  if (idxOrderId == null) {
+    throw new Error("Shopify Orders headers don't match expected names. Missing 'Order ID'.");
+  }
+
+  let sampleOrderId = "";
+  for (let r = 1; r < values.length; r++) {
+    sampleOrderId = _normTxt(values[r][idxOrderId]);
+    if (sampleOrderId) break;
+  }
+
+  if (!sampleOrderId) {
+    SpreadsheetApp.openById(PRODUCT_RECIPE_SHEET_ID).getSheetByName(PRODUCT_RECIPE_TAB_NAME);
+    return {
+      ok: true,
+      message: "Authorization completed. Add an Order ID row before testing Smart Order output."
+    };
+  }
+
+  const summary = getSmartOrderSummary(sampleOrderId);
+  return {
+    ok: true,
+    orderId: sampleOrderId,
+    totalToBuild: Number(summary.totalToBuild) || 0,
+    message: "Authorization completed."
+  };
 }
