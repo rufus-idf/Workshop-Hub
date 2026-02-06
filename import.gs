@@ -370,27 +370,35 @@ function importApprovedShopifyRow_(shopifyRowIndex) {
     }
   }
 
-  // Ghost-row-safe append
-  const getRealLastRow = (sheet) => {
+  // Ghost-row-safe append (find first empty block)
+  const findFirstEmptyBlock = (sheet, blockSize) => {
     const colA = sheet.getRange("A1:A").getValues();
-    for (let i = colA.length - 1; i >= 0; i--) {
-      if (colA[i][0] !== "") return i + 1;
+    const needed = Math.max(1, blockSize || 1);
+    for (let i = 1; i < colA.length; i++) { // start after header
+      let canUse = true;
+      for (let j = 0; j < needed; j++) {
+        if ((i + j) >= colA.length || colA[i + j][0] !== "") {
+          canUse = false;
+          break;
+        }
+      }
+      if (canUse) return i + 1;
     }
-    return 1;
+    return colA.length + 1;
   };
 
   if (rowsForPanels.length) {
-    const nextRow = getRealLastRow(hubSheet) + 1;
+    const nextRow = findFirstEmptyBlock(hubSheet, rowsForPanels.length);
     hubSheet.getRange(nextRow, 1, rowsForPanels.length, rowsForPanels[0].length).setValues(rowsForPanels);
   }
 
   if (rowsForComponents.length) {
-    const nextRow = getRealLastRow(compSheet) + 1;
+    const nextRow = findFirstEmptyBlock(compSheet, rowsForComponents.length);
     compSheet.getRange(nextRow, 1, rowsForComponents.length, rowsForComponents[0].length).setValues(rowsForComponents);
   }
 
   if (rowsForDelivery.length) {
-    const nextRow = getRealLastRow(delivSheet) + 1;
+    const nextRow = findFirstEmptyBlock(delivSheet, rowsForDelivery.length);
     delivSheet.getRange(nextRow, 1, rowsForDelivery.length, rowsForDelivery[0].length).setValues(rowsForDelivery);
   }
 

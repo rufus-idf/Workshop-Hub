@@ -248,6 +248,16 @@ function buildPanelHistoryPayload_(colName, delta, userEmail, timestamp) {
   };
 }
 
+function buildDamagePayload_(qty, reason, userEmail, timestamp) {
+  return {
+    changeType: "Damaged",
+    quantity: -Math.abs(Number(qty) || 0),
+    reason: reason || "Damaged",
+    user: userEmail || "Workshop App User",
+    timestamp: timestamp || new Date()
+  };
+}
+
 function logPanelHistoryEntry_(panelRow, panelInfoCols, payload) {
   const sheet = getPanelHistorySheet_();
   if (!sheet) return;
@@ -309,6 +319,64 @@ function getPanelHistorySheet_() {
   }
 
   return sheet;
+}
+
+function markPanelDamaged(rowIndex, qty, reason) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName("Manufacture Hub");
+  if (!sheet) throw new Error("Sheet 'Manufacture Hub' missing");
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+
+  try {
+    const qtyNum = Math.floor(Number(qty) || 0);
+    if (!rowIndex || qtyNum <= 0) throw new Error("Invalid damaged quantity.");
+
+    const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    const map = {};
+    headers.forEach((h, i) => map[String(h || "").trim().toLowerCase()] = i + 1);
+    const panelInfoCols = getPanelInfoColumnMap_(map);
+
+    const colQtyOrder = map["qty order"] || map["qty per order"];
+    const colQtyCut = map["qty cut"];
+    const colQtyProcessed = map["qty processed"];
+    const colQtyEdge = map["qty edge finish"];
+    const colQtyPacked = map["qty packed"];
+    const colLastAction = map["last action"];
+    const colLastUser = map["last user"];
+    const colLastUpdated = map["last updated"];
+
+    if (!colQtyOrder || !colQtyCut || !colQtyProcessed || !colQtyEdge || !colQtyPacked) {
+      throw new Error("Manufacture Hub missing required quantity columns.");
+    }
+
+    const rowData = sheet.getRange(rowIndex, 1, 1, sheet.getLastColumn()).getValues()[0];
+    const qtyOrder = Number(rowData[colQtyOrder - 1]) || 0;
+
+    const timestamp = new Date();
+    const userEmail = Session.getActiveUser().getEmail() || "Workshop App User";
+
+    sheet.getRange(rowIndex, colQtyOrder).setValue(qtyOrder + qtyNum);
+
+    if (colLastAction) sheet.getRange(rowIndex, colLastAction).setValue("Damaged");
+    if (colLastUser) sheet.getRange(rowIndex, colLastUser).setValue(userEmail);
+    if (colLastUpdated) sheet.getRange(rowIndex, colLastUpdated).setValue(timestamp);
+
+    logPanelHistoryEntry_(rowData, panelInfoCols, buildDamagePayload_(qtyNum, reason, userEmail, timestamp));
+
+    const targetOrderId = rowData[panelInfoCols.orderId - 1];
+    const targetProduct = rowData[panelInfoCols.productName - 1];
+    const updatedData = sheet.getDataRange().getValues();
+    if (targetOrderId && targetProduct) {
+      syncProductCompletions_(updatedData, [{ orderId: targetOrderId, productName: targetProduct }]);
+    }
+
+    SpreadsheetApp.flush();
+    return { success: true };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 // 4. PROCESS PANEL UPDATES (Robust Dynamic + Safe Lock + Array Return + Delta Fix)
