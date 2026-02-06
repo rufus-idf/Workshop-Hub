@@ -921,7 +921,14 @@ function getSmartOrderSummary(orderId) {
   (inventory.edge || []).forEach(item => {
     const mat = _normTxt(item.material).toLowerCase();
     if (!mat) return;
-    edgeStockList.push({ material: mat, rolls: Number(item.rolls) || 0 });
+    const rollLength = Number(item.rollLength) || 0;
+    const rolls = Number(item.rolls) || 0;
+    edgeStockList.push({
+      material: mat,
+      rollLength,
+      rolls,
+      stockMeters: rollLength * rolls
+    });
   });
 
   const sumMatchingStock = (material, list, field) => {
@@ -938,8 +945,6 @@ function getSmartOrderSummary(orderId) {
 
   const MDF_SHEET_AREA = 2.8 * 2.07;
   const PLY_SHEET_AREA = 3.05 * 1.22;
-  const EDGE_ROLL_METERS = 75;
-
   const totalsCompMap = {};
   const totalsWoodMap = {};
   const totalsEdgeMap = {};
@@ -1023,14 +1028,12 @@ function getSmartOrderSummary(orderId) {
     });
 
     const edge = Object.values(edgeMap).map(item => {
-      const rollsNeeded = Math.ceil(item.meters / EDGE_ROLL_METERS);
-      const stockRolls = sumMatchingStock(item.material, edgeStockList, "rolls");
+      const stockMeters = sumMatchingStock(item.material, edgeStockList, "stockMeters");
       return {
         material: item.material,
         meters: item.meters,
-        rollsNeeded,
-        stockRolls,
-        shortRolls: Math.max(0, rollsNeeded - stockRolls)
+        stockMeters,
+        shortMeters: Math.max(0, item.meters - stockMeters)
       };
     });
 
@@ -1071,14 +1074,12 @@ function getSmartOrderSummary(orderId) {
       };
     }),
     edge: Object.values(totalsEdgeMap).map(item => {
-      const rollsNeeded = Math.ceil(item.meters / EDGE_ROLL_METERS);
-      const stockRolls = sumMatchingStock(item.material, edgeStockList, "rolls");
+      const stockMeters = sumMatchingStock(item.material, edgeStockList, "stockMeters");
       return {
         material: item.material,
         meters: item.meters,
-        rollsNeeded,
-        stockRolls,
-        shortRolls: Math.max(0, rollsNeeded - stockRolls)
+        stockMeters,
+        shortMeters: Math.max(0, item.meters - stockMeters)
       };
     })
   };
@@ -1094,8 +1095,7 @@ function getSmartOrderSummary(orderId) {
     sheetSizes: {
       mdf: "2800 x 2070mm",
       ply: "3050 x 1220mm"
-    },
-    edgeRollMeters: EDGE_ROLL_METERS
+    }
   };
 }
 
@@ -1149,13 +1149,12 @@ function exportSmartOrderToSheets(orderId) {
     ])
   );
 
-  row = _writeSmartOrderTableSection_(summarySheet, row, "TOTAL EDGE REQUIREMENTS", ["Material", "Meters", `Rolls (${summary.edgeRollMeters || 75}m)`, "In Stock", "Needed"],
+  row = _writeSmartOrderTableSection_(summarySheet, row, "TOTAL EDGE REQUIREMENTS", ["Material", "Meters", "In Stock (m)", "Needed (m)"],
     (summary.totals && summary.totals.edge ? summary.totals.edge : []).map(item => [
       item.material,
       Number(item.meters) || 0,
-      Number(item.rollsNeeded) || 0,
-      Number(item.stockRolls) || 0,
-      Number(item.shortRolls) || 0
+      Number(item.stockMeters) || 0,
+      Number(item.shortMeters) || 0
     ])
   );
 
@@ -1196,13 +1195,12 @@ function exportSmartOrderToSheets(orderId) {
       ])
     );
 
-    r = _writeSmartOrderTableSection_(sh, r, "EDGEBAND", ["Material", "Meters", `Rolls (${summary.edgeRollMeters || 75}m)`, "In Stock", "Needed"],
+    r = _writeSmartOrderTableSection_(sh, r, "EDGEBAND", ["Material", "Meters", "In Stock (m)", "Needed (m)"],
       (prod.edge || []).map(item => [
         item.material,
         Number(item.meters) || 0,
-        Number(item.rollsNeeded) || 0,
-        Number(item.stockRolls) || 0,
-        Number(item.shortRolls) || 0
+        Number(item.stockMeters) || 0,
+        Number(item.shortMeters) || 0
       ])
     );
 
@@ -1734,7 +1732,7 @@ function getInventoryData() {
       });
     }
   }
-    // C. EDGE BAND STOCK (3-Column Layout)
+  // C. EDGE BAND STOCK (5-Column Layout)
   if (edgeSheet && edgeSheet.getLastRow() > 1) {
     const data = edgeSheet.getDataRange().getValues();
     for (let i = 1; i < data.length; i++) {
@@ -1742,8 +1740,9 @@ function getInventoryData() {
         rowIndex: i + 1,
         material: String(data[i][0] || "").trim(),
         thickness: String(data[i][1] || "").trim(),
-        onOrder: Number(data[i][2]) || 0, // Col C = Rolls on Order
-        rolls: Number(data[i][3]) || 0    // Col D = Rolls In Stock
+        rollLength: Number(data[i][2]) || 0, // Col C = Roll Length
+        onOrder: Number(data[i][3]) || 0, // Col D = Rolls on Order
+        rolls: Number(data[i][4]) || 0    // Col E = Rolls In Stock
       });
     }
   }
@@ -1789,16 +1788,17 @@ function adjustEdgeStock(rowIndex, change, reason) {
   const sheet = ss.getSheetByName("Edge Band Stock");
   if (!sheet) throw new Error("Edge Band Stock tab missing");
 
-  const currentVal = sheet.getRange(rowIndex, 4).getValue(); // Col D = Rolls In Stock
+  const currentVal = sheet.getRange(rowIndex, 5).getValue(); // Col E = Rolls In Stock
   const newVal = (Number(currentVal) || 0) + Number(change);
 
   if (newVal < 0) throw new Error("Stock cannot be negative");
 
-  sheet.getRange(rowIndex, 4).setValue(newVal);
+  sheet.getRange(rowIndex, 5).setValue(newVal);
 
   const mat = sheet.getRange(rowIndex, 1).getValue(); // Col A
   const thk = sheet.getRange(rowIndex, 2).getValue(); // Col B
-  logStockTransaction(`Edge: ${mat} | ${thk}mm`, change, reason);
+  const rollLength = sheet.getRange(rowIndex, 3).getValue(); // Col C
+  logStockTransaction(`Edge: ${mat} | ${thk}mm | ${rollLength}m`, change, reason);
 
   return newVal;
 
@@ -1913,12 +1913,12 @@ function adjustEdgeOnOrder(rowIndex, change) {
   const sheet = ss.getSheetByName("Edge Band Stock");
   if (!sheet) throw new Error("Edge Band Stock tab missing");
 
-  const currentVal = sheet.getRange(rowIndex, 3).getValue(); // Col C = Rolls on Order
+  const currentVal = sheet.getRange(rowIndex, 4).getValue(); // Col D = Rolls on Order
   const newVal = (Number(currentVal) || 0) + Number(change);
 
   if (newVal < 0) throw new Error("On Order cannot be negative");
 
-  sheet.getRange(rowIndex, 3).setValue(newVal);
+  sheet.getRange(rowIndex, 4).setValue(newVal);
   return newVal;
 
     } finally {
@@ -1968,19 +1968,20 @@ function receiveEdgeFromOrder(rowIndex, rollsReceived) {
   const sheet = ss.getSheetByName("Edge Band Stock");
   if (!sheet) throw new Error("Edge Band Stock tab missing");
 
-  const onOrder = Number(sheet.getRange(rowIndex, 3).getValue()) || 0; // Col C
-  const inStock = Number(sheet.getRange(rowIndex, 4).getValue()) || 0; // Col D
+  const onOrder = Number(sheet.getRange(rowIndex, 4).getValue()) || 0; // Col D
+  const inStock = Number(sheet.getRange(rowIndex, 5).getValue()) || 0; // Col E
 
   const qty = Number(rollsReceived) || 0;
   if (qty <= 0) throw new Error("Receive qty must be > 0");
   if (qty > onOrder) throw new Error("Cannot receive more than On Order");
 
-  sheet.getRange(rowIndex, 3).setValue(onOrder - qty);
-  sheet.getRange(rowIndex, 4).setValue(inStock + qty);
+  sheet.getRange(rowIndex, 4).setValue(onOrder - qty);
+  sheet.getRange(rowIndex, 5).setValue(inStock + qty);
 
   const mat = sheet.getRange(rowIndex, 1).getValue(); // Col A
   const thk = sheet.getRange(rowIndex, 2).getValue(); // Col B
-  logStockTransaction(`Edge: ${mat} | ${thk}mm`, qty, "Restock / Delivery (from Order)");
+  const rollLength = sheet.getRange(rowIndex, 3).getValue(); // Col C
+  logStockTransaction(`Edge: ${mat} | ${thk}mm | ${rollLength}m`, qty, "Restock / Delivery (from Order)");
 
   return "Success";
 
