@@ -242,7 +242,7 @@ function buildPanelHistoryPayload_(colName, delta, userEmail, timestamp) {
   return {
     changeType: changeLabels[colName] || colName,
     quantity: delta,
-    reason: "Qty update",
+    reason: "Manufacturing",
     user: userEmail || "Workshop App User",
     timestamp: timestamp || new Date()
   };
