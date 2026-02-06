@@ -225,6 +225,7 @@ function getPanelInfoColumnMap_(sheetHeaderMap) {
   return {
     orderId: sheetHeaderMap["order id"] || 1,
     productName: sheetHeaderMap["product name"] || sheetHeaderMap["product"] || 3,
+    sku: sheetHeaderMap["sku"] || sheetHeaderMap["product sku"] || sheetHeaderMap["product code"] || 4,
     panelName: sheetHeaderMap["panel name"] || 5,
     barcodeId: sheetHeaderMap["barcode id"] || sheetHeaderMap["barcode"] || 20
   };
@@ -263,6 +264,7 @@ function logPanelHistoryEntry_(panelRow, panelInfoCols, payload) {
 
   const orderId = panelRow[panelInfoCols.orderId - 1];
   const productName = panelRow[panelInfoCols.productName - 1];
+  const sku = panelInfoCols.sku ? panelRow[panelInfoCols.sku - 1] : "";
   const panelName = panelRow[panelInfoCols.panelName - 1];
   const barcodeId = panelInfoCols.barcodeId ? panelRow[panelInfoCols.barcodeId - 1] : "";
 
@@ -271,9 +273,12 @@ function logPanelHistoryEntry_(panelRow, panelInfoCols, payload) {
   setVal("order id", orderId);
   setVal("product", productName);
   setVal("product name", productName);
+  setVal("sku", sku);
+  setVal("product sku", sku);
   setVal("panel name", panelName);
   setVal("quantity", payload.quantity);
   setVal("change", payload.changeType);
+  setVal("change type", payload.changeType);
   setVal("reason", payload.reason);
   setVal("user", payload.user);
   setVal("timestamp", payload.timestamp);
