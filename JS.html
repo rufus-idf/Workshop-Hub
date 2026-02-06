@@ -20,6 +20,7 @@
   let currentCncTab = "load";
   let currentCncWoodSubTab = 'sheets';
   let cncWoodViewData = null; // holds the last filtered list shown in CNC
+  let currentDamageRowIndex = null;
   // --- Robust saving / offline handling ---
   let saveInFlight = false;
   let compSaveInFlight = false;
@@ -189,6 +190,19 @@ const fmtNum = (v, digits = 0) => {
 const fmtMaybe = (v, digits = 0) => (v == null ? "-" : fmtNum(v, digits));
 const jsStr = (s) => JSON.stringify(String(s ?? ""));
 
+function getPanelDamageInfo(panelData, prodData) {
+  const per = Number(panelData?.qtyPerUnit) || 1;
+  const qtyOrder = Number(panelData?.qtyOrder) || 0;
+  if (!prodData) return { required: qtyOrder, damaged: 0, total: qtyOrder };
+
+  const orderObj = rawData?.[currentOrder] || {};
+  const del = getDeliveryTotals(orderObj, currentProduct);
+  const requiredUnits = getRequiredUnits(prodData, del.total);
+  const required = Math.max(0, requiredUnits * per);
+  const damaged = Math.max(0, qtyOrder - required);
+  const total = qtyOrder;
+  return { required, damaged, total };
+}
 
   // DEFINITIONS
   const descriptions = {
@@ -356,15 +370,23 @@ function getRequiredUnits(prodData, deliveryTotal) {
 function getManufacturedUnits(prodData) {
   // Panels limiting factor
   let panelUnits = Infinity;
+  const panelTotals = {};
 
   if (prodData && prodData.panels && prodData.panels.length) {
     prodData.panels.forEach(p => {
       const per = Number(p.qtyPerUnit) || 1;
       const packed = Number(p.qtyPacked) || 0;
-      const sets = Math.floor(packed / per);
-      if (sets < panelUnits) panelUnits = sets;
+      const key = String(p.panelName || "");
+      if (!panelTotals[key]) panelTotals[key] = { packed: 0, per };
+      panelTotals[key].packed += packed;
     });
   }
+
+  Object.keys(panelTotals).forEach(key => {
+    const entry = panelTotals[key];
+    const sets = Math.floor((Number(entry.packed) || 0) / (Number(entry.per) || 1));
+    if (sets < panelUnits) panelUnits = sets;
+  });
 
   if (panelUnits === Infinity) panelUnits = 0;
 
@@ -1608,7 +1630,8 @@ alert(
   const list = document.getElementById('panel-list');
   list.innerHTML = '';
 
-  const panels = (rawData[currentOrder]?.products?.[currentProduct]?.panels) || [];
+  const productObj = rawData[currentOrder]?.products?.[currentProduct];
+  const panels = productObj?.panels || [];
   if (!panels.length) {
     list.innerHTML = `<div class="text-center text-muted py-4">No panels for this product.</div>`;
     showView('view-panels');
@@ -1650,6 +1673,7 @@ alert(
       const proc = Number(p.qtyProcessed) || 0;
       const fin = Number(p.qtyEdgeFinish) || 0;
       const pack = Number(p.qtyPacked) || 0;
+      const damageInfo = getPanelDamageInfo(p, productObj);
 
       const progressUnits = Math.min(cut, req) + Math.min(proc, req) + Math.min(fin, req) + Math.min(pack, req);
       const totalUnits = req * 4;
@@ -1667,14 +1691,17 @@ alert(
         <div class="d-flex justify-content-between align-items-center">
           <div>
             <div class="fw-bold text-dark" style="font-size: 1.1rem;">${p.panelName}</div>
-            <div class="small text-muted">Qty Required: ${req}</div>
+            <div class="small text-muted">Required: ${damageInfo.required} • Damaged: ${damageInfo.damaged} • Total: ${damageInfo.total}</div>
             <div class="small text-muted mt-1">
               ${cut} Cut — ${proc} Processed — ${fin} Finished — ${pack} Packed
             </div>
           </div>
           <div class="d-flex align-items-center">
-            ${isDone ? '<span class="badge bg-success rounded-pill me-2">Packed ✅</span>' : ''}
-            <div class="text-muted" style="font-size: 1.5rem;">➔</div>
+            <div class="panel-row-actions">
+              <button class="damage-btn" title="Mark damaged" onclick="openDamageModal(event, ${p.rowIndex})">⚠️</button>
+              ${isDone ? '<span class="badge bg-success rounded-pill">Packed ✅</span>' : ''}
+            </div>
+            <div class="text-muted ms-2" style="font-size: 1.5rem;">➔</div>
           </div>
         </div>
         <div class="progress-track mt-2" style="height: 4px;">
@@ -1706,9 +1733,11 @@ alert(
 
      currentPanelName = norm(panelData.panelName);
 
+     const damageInfo = getPanelDamageInfo(panelData, productObj);
+
      // Update Header
      document.getElementById('single-panel-name').innerText = panelData.panelName;
-     document.getElementById('single-panel-sku').innerText = `Qty: ${panelData.qtyOrder}`;
+     document.getElementById('single-panel-sku').innerText = `Required: ${damageInfo.required} • Damaged: ${damageInfo.damaged} • Total: ${damageInfo.total}`;
 
      // Render Controls into the new container
      const container = document.getElementById('single-panel-controls');
@@ -1722,9 +1751,12 @@ alert(
         <div class="mb-4">
            ${renderControl('Finish', 'edgeFinish', panelData.qtyEdgeFinish, panelData.rowIndex, 'btn-finish')}
         </div>
-        <div class="mb-0">
+        <div class="mb-4">
            ${renderControl('Pack', 'packed', panelData.qtyPacked, panelData.rowIndex, 'btn-pack')}
         </div>
+        <button class="btn btn-warning w-100 rounded-pill fw-bold" onclick="openDamageModal(null, ${panelData.rowIndex})">
+          ⚠️ Mark Damaged Panel
+        </button>
      `;
 
      showView('view-single-panel');
@@ -1825,6 +1857,64 @@ alert(
 function tapFillMax(e, rowIdx, type) {
   if (e) { e.preventDefault(); e.stopPropagation(); }
   fillMax(rowIdx, type);
+}
+
+function openDamageModal(e, rowIdx) {
+  if (e) { e.preventDefault(); e.stopPropagation(); }
+  const productObj = rawData?.[currentOrder]?.products?.[currentProduct];
+  const panelData = productObj?.panels?.find(p => String(p.rowIndex) === String(rowIdx));
+  if (!panelData) {
+    alert("Panel data not found.");
+    return;
+  }
+
+  currentDamageRowIndex = rowIdx;
+  const metaEl = document.getElementById("damage-panel-meta");
+  if (metaEl) {
+    metaEl.textContent = `${panelData.panelName} • ${currentProduct}`;
+  }
+  const qtyInput = document.getElementById("damage-qty");
+  const reasonInput = document.getElementById("damage-reason");
+  if (qtyInput) qtyInput.value = "1";
+  if (reasonInput) reasonInput.value = "";
+
+  new bootstrap.Modal(document.getElementById("damageModal")).show();
+}
+
+function submitDamage() {
+  const qtyInput = document.getElementById("damage-qty");
+  const reasonInput = document.getElementById("damage-reason");
+  const qty = Number(qtyInput ? qtyInput.value : 0);
+  const reason = String(reasonInput ? reasonInput.value : "").trim();
+
+  if (!currentDamageRowIndex) {
+    alert("Missing panel reference.");
+    return;
+  }
+  if (!qty || qty <= 0) {
+    alert("Enter a valid damaged quantity.");
+    return;
+  }
+  if (!reason) {
+    alert("Please enter a reason for the damage.");
+    return;
+  }
+
+  showStatus("Recording damage...", false);
+
+  google.script.run
+    .withSuccessHandler(() => {
+      showStatus("Damage recorded", true);
+      const modalEl = document.getElementById("damageModal");
+      const modal = modalEl ? bootstrap.Modal.getInstance(modalEl) : null;
+      if (modal) modal.hide();
+      reloadAllData();
+    })
+    .withFailureHandler((err) => {
+      showStatus("Not saved", true);
+      alert("Failed to record damage: " + (err && err.message ? err.message : err));
+    })
+    .markPanelDamaged(currentDamageRowIndex, qty, reason);
 }
 
 
