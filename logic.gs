@@ -7,6 +7,14 @@ function squeezeSpaces_(v) {
   return String(v ?? "").replace(/\u00A0/g, " ").trim().replace(/\s+/g, " ");
 }
 
+function normalizeEdgeMaterialName_(value) {
+  return squeezeSpaces_(value)
+    .toLowerCase()
+    .replace(/\b(edgebanding|edge\s*band|edgeband|edge|mdf)\b/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function getEdgeBandColumnMap_(sheet) {
   const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]
     .map(h => squeezeSpaces_(h).toLowerCase());
@@ -946,6 +954,7 @@ function getSmartOrderSummary(orderId) {
     const rolls = Number(item.rolls) || 0;
     edgeStockList.push({
       material: mat,
+      normalized: normalizeEdgeMaterialName_(mat),
       rollLength,
       rolls,
       stockMeters: rollLength * rolls
@@ -966,6 +975,17 @@ function getSmartOrderSummary(orderId) {
 
   const MDF_SHEET_AREA = 2.8 * 2.07;
   const PLY_SHEET_AREA = 3.05 * 1.22;
+  const sumMatchingEdgeStock = (material, list) => {
+    const key = normalizeEdgeMaterialName_(material);
+    if (!key) return 0;
+    return list.reduce((sum, item) => {
+      if (!item.normalized) return sum;
+      if (item.normalized === key || item.normalized.includes(key) || key.includes(item.normalized)) {
+        return sum + (Number(item.stockMeters) || 0);
+      }
+      return sum;
+    }, 0);
+  };
   const totalsCompMap = {};
   const totalsWoodMap = {};
   const totalsEdgeMap = {};
@@ -1049,7 +1069,7 @@ function getSmartOrderSummary(orderId) {
     });
 
     const edge = Object.values(edgeMap).map(item => {
-      const stockMeters = sumMatchingStock(item.material, edgeStockList, "stockMeters");
+      const stockMeters = sumMatchingEdgeStock(item.material, edgeStockList);
       return {
         material: item.material,
         meters: item.meters,
@@ -1095,7 +1115,7 @@ function getSmartOrderSummary(orderId) {
       };
     }),
     edge: Object.values(totalsEdgeMap).map(item => {
-      const stockMeters = sumMatchingStock(item.material, edgeStockList, "stockMeters");
+      const stockMeters = sumMatchingEdgeStock(item.material, edgeStockList);
       return {
         material: item.material,
         meters: item.meters,
