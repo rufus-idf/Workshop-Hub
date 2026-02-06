@@ -338,7 +338,7 @@ function markPanelDamaged(rowIndex, qty, reason) {
     headers.forEach((h, i) => map[String(h || "").trim().toLowerCase()] = i + 1);
     const panelInfoCols = getPanelInfoColumnMap_(map);
 
-    const colQtyOrder = map["qty order"];
+    const colQtyOrder = map["qty order"] || map["qty per order"];
     const colQtyCut = map["qty cut"];
     const colQtyProcessed = map["qty processed"];
     const colQtyEdge = map["qty edge finish"];
