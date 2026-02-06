@@ -809,6 +809,7 @@ function renderEdgeStockManager() {
             <tr class="text-secondary small text-uppercase">
               <th class="ps-3">Material</th>
               <th>Thickness</th>
+              <th>Roll Length</th>
               <th class="text-center">${mode === 'onorder' ? 'On Order' : 'In Stock'}</th>
               <th class="text-end pe-3">Action</th>
             </tr>
@@ -822,6 +823,7 @@ function renderEdgeStockManager() {
         <tr class="edge-row">
           <td class="ps-3 fw-bold text-dark">${item.material}</td>
           <td class="text-muted">${item.thickness}mm</td>
+          <td class="text-muted">${fmtNum(item.rollLength)}m</td>
 
           <td class="text-center fw-bold fs-5">${qtyVal}</td>
 
@@ -2513,7 +2515,7 @@ updateBreadcrumbsForView("view-cnc");
 
   if (type === 'edge') {
     const item = (stockData.edge || []).find(x => x.rowIndex === rowIndex);
-    if (item) { label = `Edge: ${item.material} | ${item.thickness}mm`; inStock = item.rolls; onOrder = item.onOrder; }
+    if (item) { label = `Edge: ${item.material} | ${item.thickness}mm | ${fmtNum(item.rollLength)}m`; inStock = item.rolls; onOrder = item.onOrder; }
     document.getElementById('adj-target-wrapper').style.display = '';
     document.getElementById('adj-onorder-row').style.display = '';
     document.getElementById('adj-onorder-stock').innerText = onOrder;
@@ -2550,7 +2552,7 @@ function openStockHistory(type, rowIndex) {
 
   if (type === 'edge') {
     const item = (stockData.edge || []).find(x => x.rowIndex === rowIndex);
-    if (item) key = `Edge: ${item.material} | ${item.thickness}mm`;
+    if (item) key = `Edge: ${item.material} | ${item.thickness}mm | ${fmtNum(item.rollLength)}m`;
   }
 
   if (!key) { alert("Could not find item for history."); return; }
@@ -2645,7 +2647,7 @@ function openReceiveModal(type, rowIndex) {
   }
   if (type === 'edge') {
     const item = (stockData.edge || []).find(x => x.rowIndex === rowIndex);
-    if (item) { label = `Edge: ${item.material} | ${item.thickness}mm`; onOrder = item.onOrder; }
+    if (item) { label = `Edge: ${item.material} | ${item.thickness}mm | ${fmtNum(item.rollLength)}m`; onOrder = item.onOrder; }
   }
 
   document.getElementById('recv-item-label').innerText = label;
@@ -3186,8 +3188,8 @@ function renderSmartOrderModal(data) {
   titleEl.innerText = `Smart Order • #${escHtml(data.orderId)}`;
   subtitleEl.innerText = `${data.customer ? `Customer: ${data.customer}` : "Customer unknown"} • Import to manufacture: ${fmtNum(data.totalToBuild)} units`;
 
-  const totalsHtml = buildSmartOrderSummaryTables(data.totals || {}, data.sheetSizes, data.edgeRollMeters);
-  const productHtml = buildSmartOrderProducts(data.products || [], data.sheetSizes, data.edgeRollMeters);
+  const totalsHtml = buildSmartOrderSummaryTables(data.totals || {}, data.sheetSizes);
+  const productHtml = buildSmartOrderProducts(data.products || [], data.sheetSizes);
 
   bodyEl.innerHTML = `
     <div class="smart-order-summary mb-4">
@@ -3199,19 +3201,19 @@ function renderSmartOrderModal(data) {
   `;
 }
 
-function buildSmartOrderSummaryTables(totals, sheetSizes, edgeRollMeters) {
+function buildSmartOrderSummaryTables(totals, sheetSizes) {
   const wood = totals.wood || [];
   const edge = totals.edge || [];
   const components = totals.components || [];
 
   return `
     ${buildWoodTable(wood, sheetSizes)}
-    ${buildEdgeTable(edge, edgeRollMeters)}
+    ${buildEdgeTable(edge)}
     ${buildComponentsTable(components)}
   `;
 }
 
-function buildSmartOrderProducts(products, sheetSizes, edgeRollMeters) {
+function buildSmartOrderProducts(products, sheetSizes) {
   const accordId = "smart-order-products";
   const items = products.map((prod, idx) => {
     const collapseId = `smart-prod-${idx}`;
@@ -3231,7 +3233,7 @@ function buildSmartOrderProducts(products, sheetSizes, edgeRollMeters) {
         <div id="${collapseId}" class="accordion-collapse collapse" aria-labelledby="${headerId}" data-bs-parent="#${accordId}">
           <div class="accordion-body pt-2">
             ${buildWoodTable(prod.wood || [], sheetSizes)}
-            ${buildEdgeTable(prod.edge || [], edgeRollMeters)}
+            ${buildEdgeTable(prod.edge || [])}
             ${buildComponentsTable(prod.components || [])}
           </div>
         </div>
@@ -3282,7 +3284,7 @@ function buildWoodTable(items, sheetSizes) {
   `;
 }
 
-function buildEdgeTable(items, edgeRollMeters) {
+function buildEdgeTable(items) {
   if (!items.length) {
     return `<div class="smart-order-empty text-muted">No edgebanding required.</div>`;
   }
@@ -3291,9 +3293,8 @@ function buildEdgeTable(items, edgeRollMeters) {
     <tr>
       <td class="fw-semibold">${escHtml(item.material)}</td>
       <td class="text-end">${fmtNum(item.meters, 2)} m</td>
-      <td class="text-end">${fmtNum(item.rollsNeeded)}</td>
-      <td class="text-end">${fmtNum(item.stockRolls)}</td>
-      <td class="text-end ${item.shortRolls > 0 ? "text-danger fw-semibold" : "text-success fw-semibold"}">${fmtNum(item.shortRolls)}</td>
+      <td class="text-end">${fmtNum(item.stockMeters, 2)} m</td>
+      <td class="text-end ${item.shortMeters > 0 ? "text-danger fw-semibold" : "text-success fw-semibold"}">${fmtNum(item.shortMeters, 2)} m</td>
     </tr>
   `).join("");
 
@@ -3304,9 +3305,8 @@ function buildEdgeTable(items, edgeRollMeters) {
           <tr class="text-secondary small">
             <th>Edgeband Material</th>
             <th class="text-end">Meters</th>
-            <th class="text-end">Rolls (${edgeRollMeters || 75}m)</th>
-            <th class="text-end">In Stock</th>
-            <th class="text-end">Needed</th>
+            <th class="text-end">In Stock (m)</th>
+            <th class="text-end">Needed (m)</th>
           </tr>
         </thead>
         <tbody>${rows}</tbody>
