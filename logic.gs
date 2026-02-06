@@ -178,6 +178,7 @@ function updateQty(rowIndex, colName, value) {
   const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
   const map = {};
   headers.forEach((h, i) => map[String(h || "").trim().toLowerCase()] = i + 1);
+  const panelInfoCols = getPanelInfoColumnMap_(map);
 
   // Map app keys to spreadsheet header names
   let headerName = "";
@@ -194,6 +195,7 @@ function updateQty(rowIndex, colName, value) {
     if (userEmail === "") userEmail = "Workshop App User"; 
 
     // 2. UPDATE THE QUANTITY
+    const previousValue = Number(sheet.getRange(rowIndex, colIndex).getValue()) || 0;
     sheet.getRange(rowIndex, colIndex).setValue(value);
 
     // 3. UPDATE METADATA (Only if columns exist)
@@ -208,11 +210,101 @@ function updateQty(rowIndex, colName, value) {
       const panelName = rowData[4]; 
       logSheet.appendRow([timestamp, userEmail, orderId, panelName, colName, value]);
     }
+
+    const delta = Number(value) - previousValue;
+    if (delta !== 0) {
+      const rowData = sheet.getRange(rowIndex, 1, 1, sheet.getLastColumn()).getValues()[0];
+      logPanelHistoryEntry_(rowData, panelInfoCols, buildPanelHistoryPayload_(colName, delta, userEmail, timestamp));
+    }
     return "Success";
   }
   return "Error: Column not found";
 }
 
+function getPanelInfoColumnMap_(sheetHeaderMap) {
+  return {
+    orderId: sheetHeaderMap["order id"] || 1,
+    productName: sheetHeaderMap["product name"] || sheetHeaderMap["product"] || 3,
+    panelName: sheetHeaderMap["panel name"] || 5,
+    barcodeId: sheetHeaderMap["barcode id"] || sheetHeaderMap["barcode"] || 20
+  };
+}
+
+function buildPanelHistoryPayload_(colName, delta, userEmail, timestamp) {
+  const changeLabels = {
+    cut: "Cut",
+    processed: "Processed",
+    edgeFinish: "Edge Finish",
+    packed: "Packed"
+  };
+
+  return {
+    changeType: changeLabels[colName] || colName,
+    quantity: delta,
+    reason: "Qty update",
+    user: userEmail || "Workshop App User",
+    timestamp: timestamp || new Date()
+  };
+}
+
+function logPanelHistoryEntry_(panelRow, panelInfoCols, payload) {
+  const sheet = getPanelHistorySheet_();
+  if (!sheet) return;
+
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const headerMap = {};
+  headers.forEach((h, i) => headerMap[String(h || "").trim().toLowerCase()] = i);
+
+  const row = new Array(headers.length).fill("");
+  const setVal = (key, value) => {
+    const idx = headerMap[key];
+    if (idx !== undefined) row[idx] = value;
+  };
+
+  const orderId = panelRow[panelInfoCols.orderId - 1];
+  const productName = panelRow[panelInfoCols.productName - 1];
+  const panelName = panelRow[panelInfoCols.panelName - 1];
+  const barcodeId = panelInfoCols.barcodeId ? panelRow[panelInfoCols.barcodeId - 1] : "";
+
+  setVal("event id", Utilities.getUuid());
+  setVal("barcode id", barcodeId);
+  setVal("order id", orderId);
+  setVal("product", productName);
+  setVal("product name", productName);
+  setVal("panel name", panelName);
+  setVal("quantity", payload.quantity);
+  setVal("change", payload.changeType);
+  setVal("reason", payload.reason);
+  setVal("user", payload.user);
+  setVal("timestamp", payload.timestamp);
+
+  sheet.appendRow(row);
+}
+
+function getPanelHistorySheet_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName("Panel History");
+  if (!sheet) {
+    sheet = ss.insertSheet("Panel History");
+  }
+
+  if (sheet.getLastRow() === 0) {
+    sheet.appendRow([
+      "Event ID",
+      "Barcode ID",
+      "Order ID",
+      "Product",
+      "Panel Name",
+      "Quantity",
+      "Change",
+      "Reason",
+      "User",
+      "Timestamp"
+    ]);
+  }
+
+  return sheet;
+}
 
 // 4. PROCESS PANEL UPDATES (Robust Dynamic + Safe Lock + Array Return + Delta Fix)
 function processBatch(updates) {
@@ -227,6 +319,7 @@ function processBatch(updates) {
   const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
   const map = {};
   headers.forEach((h, i) => map[String(h || "").trim().toLowerCase()] = i + 1);
+  const panelInfoCols = getPanelInfoColumnMap_(map);
 
   const lock = LockService.getScriptLock();
   lock.waitLock(30000); 
@@ -258,6 +351,7 @@ function processBatch(updates) {
       const colIndex = map[headerName];
       
       if (colIndex > 0) {
+        const previousValue = Number(sheet.getRange(rowIndex, colIndex).getValue()) || 0;
         // Update Quantity
         sheet.getRange(rowIndex, colIndex).setValue(value);
         
@@ -265,6 +359,12 @@ function processBatch(updates) {
         if (map["last action"]) sheet.getRange(rowIndex, map["last action"]).setValue(colName);
         if (map["last user"]) sheet.getRange(rowIndex, map["last user"]).setValue(userEmail);
         if (map["last updated"]) sheet.getRange(rowIndex, map["last updated"]).setValue(timestamp);
+
+        const delta = Number(value) - previousValue;
+        if (delta !== 0) {
+          const rowData = sheet.getRange(rowIndex, 1, 1, sheet.getLastColumn()).getValues()[0];
+          logPanelHistoryEntry_(rowData, panelInfoCols, buildPanelHistoryPayload_(colName, delta, userEmail, timestamp));
+        }
 
         // Add to results array for the frontend
         results.push({
