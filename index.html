@@ -21,6 +21,30 @@
 
   <div class="modal fade" id="infoModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><div class="modal-content border-0 shadow"><div class="modal-header border-0 pb-0"><h5 class="modal-title fw-bold" id="modalTitle"></h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body text-secondary" id="modalBody"></div><div class="modal-footer border-0 pt-0"><button type="button" class="btn btn-dark w-100 rounded-pill" data-bs-dismiss="modal">Got it</button></div></div></div></div>
 
+  <div class="modal fade" id="damageModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content border-0 shadow">
+        <div class="modal-header border-0 pb-0">
+          <div>
+            <h5 class="modal-title fw-bold">Mark Panel as Damaged</h5>
+            <div class="small text-muted" id="damage-panel-meta"></div>
+          </div>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <label class="small text-muted mb-1">Quantity Damaged</label>
+          <input type="number" id="damage-qty" class="form-control form-control-lg mb-3 fw-bold" min="1" placeholder="e.g. 1">
+
+          <label class="small text-muted mb-1">Reason</label>
+          <textarea id="damage-reason" class="form-control form-control-lg fw-bold" rows="3" placeholder="e.g. Scratched, chipped, incorrect size"></textarea>
+        </div>
+        <div class="modal-footer border-0 pt-0">
+          <button type="button" class="btn btn-dark w-100 rounded-pill py-3 fw-bold" onclick="submitDamage()">Record Damage</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
 
   <div class="modal fade" id="assignModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
