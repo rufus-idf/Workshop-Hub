@@ -248,6 +248,16 @@ function buildPanelHistoryPayload_(colName, delta, userEmail, timestamp) {
   };
 }
 
+function buildDamagePayload_(qty, reason, userEmail, timestamp) {
+  return {
+    changeType: "Damaged",
+    quantity: -Math.abs(Number(qty) || 0),
+    reason: reason || "Damaged",
+    user: userEmail || "Workshop App User",
+    timestamp: timestamp || new Date()
+  };
+}
+
 function logPanelHistoryEntry_(panelRow, panelInfoCols, payload) {
   const sheet = getPanelHistorySheet_();
   if (!sheet) return;
@@ -309,6 +319,107 @@ function getPanelHistorySheet_() {
   }
 
   return sheet;
+}
+
+function markPanelDamaged(rowIndex, qty, reason) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName("Manufacture Hub");
+  if (!sheet) throw new Error("Sheet 'Manufacture Hub' missing");
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+
+  try {
+    const qtyNum = Math.floor(Number(qty) || 0);
+    if (!rowIndex || qtyNum <= 0) throw new Error("Invalid damaged quantity.");
+
+    const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    const map = {};
+    headers.forEach((h, i) => map[String(h || "").trim().toLowerCase()] = i + 1);
+    const panelInfoCols = getPanelInfoColumnMap_(map);
+
+    const colQtyOrder = map["qty order"] || map["qty per order"];
+    const colQtyCut = map["qty cut"];
+    const colQtyProcessed = map["qty processed"];
+    const colQtyEdge = map["qty edge finish"];
+    const colQtyPacked = map["qty packed"];
+    const colLastAction = map["last action"];
+    const colLastUser = map["last user"];
+    const colLastUpdated = map["last updated"];
+
+    if (!colQtyOrder || !colQtyCut || !colQtyProcessed || !colQtyEdge || !colQtyPacked) {
+      throw new Error("Manufacture Hub missing required quantity columns.");
+    }
+
+    const rowData = sheet.getRange(rowIndex, 1, 1, sheet.getLastColumn()).getValues()[0];
+    const cut = Number(rowData[colQtyCut - 1]) || 0;
+    const processed = Number(rowData[colQtyProcessed - 1]) || 0;
+    const edge = Number(rowData[colQtyEdge - 1]) || 0;
+    let packed = Number(rowData[colQtyPacked - 1]) || 0;
+
+    let remaining = qtyNum;
+
+    const reducePacked = Math.min(remaining, packed);
+    packed -= reducePacked;
+    remaining -= reducePacked;
+
+    const maxEdgeReduce = Math.max(0, edge - packed);
+    const reduceEdge = Math.min(remaining, maxEdgeReduce);
+    const edgeNext = edge - reduceEdge;
+    remaining -= reduceEdge;
+
+    const maxProcReduce = Math.max(0, processed - edgeNext);
+    const reduceProc = Math.min(remaining, maxProcReduce);
+    const procNext = processed - reduceProc;
+    remaining -= reduceProc;
+
+    const maxCutReduce = Math.max(0, cut - procNext);
+    const reduceCut = Math.min(remaining, maxCutReduce);
+    const cutNext = cut - reduceCut;
+    remaining -= reduceCut;
+
+    if (remaining > 0) {
+      throw new Error("Not enough panels available in production stages to mark damaged.");
+    }
+
+    const timestamp = new Date();
+    const userEmail = Session.getActiveUser().getEmail() || "Workshop App User";
+
+    sheet.getRange(rowIndex, colQtyPacked).setValue(packed);
+    sheet.getRange(rowIndex, colQtyEdge).setValue(edgeNext);
+    sheet.getRange(rowIndex, colQtyProcessed).setValue(procNext);
+    sheet.getRange(rowIndex, colQtyCut).setValue(cutNext);
+
+    if (colLastAction) sheet.getRange(rowIndex, colLastAction).setValue("Damaged");
+    if (colLastUser) sheet.getRange(rowIndex, colLastUser).setValue(userEmail);
+    if (colLastUpdated) sheet.getRange(rowIndex, colLastUpdated).setValue(timestamp);
+
+    logPanelHistoryEntry_(rowData, panelInfoCols, buildDamagePayload_(qtyNum, reason, userEmail, timestamp));
+
+    const newRow = rowData.slice();
+    newRow[colQtyOrder - 1] = qtyNum;
+    newRow[colQtyCut - 1] = 0;
+    newRow[colQtyProcessed - 1] = 0;
+    newRow[colQtyEdge - 1] = 0;
+    newRow[colQtyPacked - 1] = 0;
+    if (colLastAction) newRow[colLastAction - 1] = "";
+    if (colLastUser) newRow[colLastUser - 1] = "";
+    if (colLastUpdated) newRow[colLastUpdated - 1] = "";
+
+    sheet.appendRow(newRow);
+
+    const targetOrderId = rowData[panelInfoCols.orderId - 1];
+    const targetProduct = rowData[panelInfoCols.productName - 1];
+    const updatedData = sheet.getDataRange().getValues();
+    if (targetOrderId && targetProduct) {
+      syncProductCompletions_(updatedData, [{ orderId: targetOrderId, productName: targetProduct }]);
+    }
+
+    SpreadsheetApp.flush();
+    return { success: true };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 // 4. PROCESS PANEL UPDATES (Robust Dynamic + Safe Lock + Array Return + Delta Fix)
