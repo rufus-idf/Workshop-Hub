@@ -190,6 +190,19 @@ const fmtNum = (v, digits = 0) => {
 const fmtMaybe = (v, digits = 0) => (v == null ? "-" : fmtNum(v, digits));
 const jsStr = (s) => JSON.stringify(String(s ?? ""));
 
+function getPanelDamageInfo(panelData, prodData) {
+  const per = Number(panelData?.qtyPerUnit) || 1;
+  const qtyOrder = Number(panelData?.qtyOrder) || 0;
+  if (!prodData) return { required: qtyOrder, damaged: 0, total: qtyOrder };
+
+  const orderObj = rawData?.[currentOrder] || {};
+  const del = getDeliveryTotals(orderObj, currentProduct);
+  const requiredUnits = getRequiredUnits(prodData, del.total);
+  const required = Math.max(0, requiredUnits * per);
+  const damaged = Math.max(0, qtyOrder - required);
+  const total = qtyOrder;
+  return { required, damaged, total };
+}
 
   // DEFINITIONS
   const descriptions = {
@@ -1617,7 +1630,8 @@ alert(
   const list = document.getElementById('panel-list');
   list.innerHTML = '';
 
-  const panels = (rawData[currentOrder]?.products?.[currentProduct]?.panels) || [];
+  const productObj = rawData[currentOrder]?.products?.[currentProduct];
+  const panels = productObj?.panels || [];
   if (!panels.length) {
     list.innerHTML = `<div class="text-center text-muted py-4">No panels for this product.</div>`;
     showView('view-panels');
@@ -1659,6 +1673,7 @@ alert(
       const proc = Number(p.qtyProcessed) || 0;
       const fin = Number(p.qtyEdgeFinish) || 0;
       const pack = Number(p.qtyPacked) || 0;
+      const damageInfo = getPanelDamageInfo(p, productObj);
 
       const progressUnits = Math.min(cut, req) + Math.min(proc, req) + Math.min(fin, req) + Math.min(pack, req);
       const totalUnits = req * 4;
@@ -1676,7 +1691,7 @@ alert(
         <div class="d-flex justify-content-between align-items-center">
           <div>
             <div class="fw-bold text-dark" style="font-size: 1.1rem;">${p.panelName}</div>
-            <div class="small text-muted">Qty Required: ${req}</div>
+            <div class="small text-muted">Required: ${damageInfo.required} • Damaged: ${damageInfo.damaged} • Total: ${damageInfo.total}</div>
             <div class="small text-muted mt-1">
               ${cut} Cut — ${proc} Processed — ${fin} Finished — ${pack} Packed
             </div>
@@ -1718,9 +1733,11 @@ alert(
 
      currentPanelName = norm(panelData.panelName);
 
+     const damageInfo = getPanelDamageInfo(panelData, productObj);
+
      // Update Header
      document.getElementById('single-panel-name').innerText = panelData.panelName;
-     document.getElementById('single-panel-sku').innerText = `Qty: ${panelData.qtyOrder}`;
+     document.getElementById('single-panel-sku').innerText = `Required: ${damageInfo.required} • Damaged: ${damageInfo.damaged} • Total: ${damageInfo.total}`;
 
      // Render Controls into the new container
      const container = document.getElementById('single-panel-controls');
