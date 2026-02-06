@@ -7,6 +7,27 @@ function squeezeSpaces_(v) {
   return String(v ?? "").replace(/\u00A0/g, " ").trim().replace(/\s+/g, " ");
 }
 
+function getEdgeBandColumnMap_(sheet) {
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]
+    .map(h => squeezeSpaces_(h).toLowerCase());
+
+  const findIndex = (names, fallback) => {
+    for (const name of names) {
+      const idx = headers.indexOf(name);
+      if (idx !== -1) return idx + 1;
+    }
+    return fallback;
+  };
+
+  return {
+    material: findIndex(["material"], 1),
+    thickness: findIndex(["thickness (mm)", "thickness"], 2),
+    rollLength: findIndex(["roll length", "roll length (m)"], 3),
+    onOrder: findIndex(["rolls on order", "on order"], 4),
+    rolls: findIndex(["rolls in stock", "in stock"], 5)
+  };
+}
+
 function canonicalRoomName_(v) {
   const cleaned = squeezeSpaces_(v);
   if (!cleaned) return "";
@@ -1732,17 +1753,18 @@ function getInventoryData() {
       });
     }
   }
-  // C. EDGE BAND STOCK (5-Column Layout)
+  // C. EDGE BAND STOCK (Header-driven)
   if (edgeSheet && edgeSheet.getLastRow() > 1) {
     const data = edgeSheet.getDataRange().getValues();
+    const map = getEdgeBandColumnMap_(edgeSheet);
     for (let i = 1; i < data.length; i++) {
       result.edge.push({
         rowIndex: i + 1,
-        material: String(data[i][0] || "").trim(),
-        thickness: String(data[i][1] || "").trim(),
-        rollLength: Number(data[i][2]) || 0, // Col C = Roll Length
-        onOrder: Number(data[i][3]) || 0, // Col D = Rolls on Order
-        rolls: Number(data[i][4]) || 0    // Col E = Rolls In Stock
+        material: String(data[i][map.material - 1] || "").trim(),
+        thickness: String(data[i][map.thickness - 1] || "").trim(),
+        rollLength: Number(data[i][map.rollLength - 1]) || 0,
+        onOrder: Number(data[i][map.onOrder - 1]) || 0,
+        rolls: Number(data[i][map.rolls - 1]) || 0
       });
     }
   }
@@ -1788,16 +1810,17 @@ function adjustEdgeStock(rowIndex, change, reason) {
   const sheet = ss.getSheetByName("Edge Band Stock");
   if (!sheet) throw new Error("Edge Band Stock tab missing");
 
-  const currentVal = sheet.getRange(rowIndex, 5).getValue(); // Col E = Rolls In Stock
+  const colMap = getEdgeBandColumnMap_(sheet);
+  const currentVal = sheet.getRange(rowIndex, colMap.rolls).getValue();
   const newVal = (Number(currentVal) || 0) + Number(change);
 
   if (newVal < 0) throw new Error("Stock cannot be negative");
 
-  sheet.getRange(rowIndex, 5).setValue(newVal);
+  sheet.getRange(rowIndex, colMap.rolls).setValue(newVal);
 
-  const mat = sheet.getRange(rowIndex, 1).getValue(); // Col A
-  const thk = sheet.getRange(rowIndex, 2).getValue(); // Col B
-  const rollLength = sheet.getRange(rowIndex, 3).getValue(); // Col C
+  const mat = sheet.getRange(rowIndex, colMap.material).getValue();
+  const thk = sheet.getRange(rowIndex, colMap.thickness).getValue();
+  const rollLength = sheet.getRange(rowIndex, colMap.rollLength).getValue();
   logStockTransaction(`Edge: ${mat} | ${thk}mm | ${rollLength}m`, change, reason);
 
   return newVal;
@@ -1913,12 +1936,13 @@ function adjustEdgeOnOrder(rowIndex, change) {
   const sheet = ss.getSheetByName("Edge Band Stock");
   if (!sheet) throw new Error("Edge Band Stock tab missing");
 
-  const currentVal = sheet.getRange(rowIndex, 4).getValue(); // Col D = Rolls on Order
+  const colMap = getEdgeBandColumnMap_(sheet);
+  const currentVal = sheet.getRange(rowIndex, colMap.onOrder).getValue();
   const newVal = (Number(currentVal) || 0) + Number(change);
 
   if (newVal < 0) throw new Error("On Order cannot be negative");
 
-  sheet.getRange(rowIndex, 4).setValue(newVal);
+  sheet.getRange(rowIndex, colMap.onOrder).setValue(newVal);
   return newVal;
 
     } finally {
@@ -1968,19 +1992,20 @@ function receiveEdgeFromOrder(rowIndex, rollsReceived) {
   const sheet = ss.getSheetByName("Edge Band Stock");
   if (!sheet) throw new Error("Edge Band Stock tab missing");
 
-  const onOrder = Number(sheet.getRange(rowIndex, 4).getValue()) || 0; // Col D
-  const inStock = Number(sheet.getRange(rowIndex, 5).getValue()) || 0; // Col E
+  const colMap = getEdgeBandColumnMap_(sheet);
+  const onOrder = Number(sheet.getRange(rowIndex, colMap.onOrder).getValue()) || 0;
+  const inStock = Number(sheet.getRange(rowIndex, colMap.rolls).getValue()) || 0;
 
   const qty = Number(rollsReceived) || 0;
   if (qty <= 0) throw new Error("Receive qty must be > 0");
   if (qty > onOrder) throw new Error("Cannot receive more than On Order");
 
-  sheet.getRange(rowIndex, 4).setValue(onOrder - qty);
-  sheet.getRange(rowIndex, 5).setValue(inStock + qty);
+  sheet.getRange(rowIndex, colMap.onOrder).setValue(onOrder - qty);
+  sheet.getRange(rowIndex, colMap.rolls).setValue(inStock + qty);
 
-  const mat = sheet.getRange(rowIndex, 1).getValue(); // Col A
-  const thk = sheet.getRange(rowIndex, 2).getValue(); // Col B
-  const rollLength = sheet.getRange(rowIndex, 3).getValue(); // Col C
+  const mat = sheet.getRange(rowIndex, colMap.material).getValue();
+  const thk = sheet.getRange(rowIndex, colMap.thickness).getValue();
+  const rollLength = sheet.getRange(rowIndex, colMap.rollLength).getValue();
   logStockTransaction(`Edge: ${mat} | ${thk}mm | ${rollLength}m`, qty, "Restock / Delivery (from Order)");
 
   return "Success";
