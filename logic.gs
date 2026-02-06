@@ -352,61 +352,18 @@ function markPanelDamaged(rowIndex, qty, reason) {
     }
 
     const rowData = sheet.getRange(rowIndex, 1, 1, sheet.getLastColumn()).getValues()[0];
-    const cut = Number(rowData[colQtyCut - 1]) || 0;
-    const processed = Number(rowData[colQtyProcessed - 1]) || 0;
-    const edge = Number(rowData[colQtyEdge - 1]) || 0;
-    let packed = Number(rowData[colQtyPacked - 1]) || 0;
-
-    let remaining = qtyNum;
-
-    const reducePacked = Math.min(remaining, packed);
-    packed -= reducePacked;
-    remaining -= reducePacked;
-
-    const maxEdgeReduce = Math.max(0, edge - packed);
-    const reduceEdge = Math.min(remaining, maxEdgeReduce);
-    const edgeNext = edge - reduceEdge;
-    remaining -= reduceEdge;
-
-    const maxProcReduce = Math.max(0, processed - edgeNext);
-    const reduceProc = Math.min(remaining, maxProcReduce);
-    const procNext = processed - reduceProc;
-    remaining -= reduceProc;
-
-    const maxCutReduce = Math.max(0, cut - procNext);
-    const reduceCut = Math.min(remaining, maxCutReduce);
-    const cutNext = cut - reduceCut;
-    remaining -= reduceCut;
-
-    if (remaining > 0) {
-      throw new Error("Not enough panels available in production stages to mark damaged.");
-    }
+    const qtyOrder = Number(rowData[colQtyOrder - 1]) || 0;
 
     const timestamp = new Date();
     const userEmail = Session.getActiveUser().getEmail() || "Workshop App User";
 
-    sheet.getRange(rowIndex, colQtyPacked).setValue(packed);
-    sheet.getRange(rowIndex, colQtyEdge).setValue(edgeNext);
-    sheet.getRange(rowIndex, colQtyProcessed).setValue(procNext);
-    sheet.getRange(rowIndex, colQtyCut).setValue(cutNext);
+    sheet.getRange(rowIndex, colQtyOrder).setValue(qtyOrder + qtyNum);
 
     if (colLastAction) sheet.getRange(rowIndex, colLastAction).setValue("Damaged");
     if (colLastUser) sheet.getRange(rowIndex, colLastUser).setValue(userEmail);
     if (colLastUpdated) sheet.getRange(rowIndex, colLastUpdated).setValue(timestamp);
 
     logPanelHistoryEntry_(rowData, panelInfoCols, buildDamagePayload_(qtyNum, reason, userEmail, timestamp));
-
-    const newRow = rowData.slice();
-    newRow[colQtyOrder - 1] = qtyNum;
-    newRow[colQtyCut - 1] = 0;
-    newRow[colQtyProcessed - 1] = 0;
-    newRow[colQtyEdge - 1] = 0;
-    newRow[colQtyPacked - 1] = 0;
-    if (colLastAction) newRow[colLastAction - 1] = "";
-    if (colLastUser) newRow[colLastUser - 1] = "";
-    if (colLastUpdated) newRow[colLastUpdated - 1] = "";
-
-    sheet.appendRow(newRow);
 
     const targetOrderId = rowData[panelInfoCols.orderId - 1];
     const targetProduct = rowData[panelInfoCols.productName - 1];
