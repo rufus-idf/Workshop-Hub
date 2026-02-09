@@ -9,6 +9,9 @@ function _extractAllocatedFromStatus_(status) {
 
 
 function updateManufactureHub() {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   
   // --- CONFIGURATION ---
@@ -61,6 +64,36 @@ function updateManufactureHub() {
   let missingSkus = [];
   let processedRows = []; // To store row numbers (1-based) that we need to mark "Imported"
 
+  // --- Existing data for deduplication ---
+  const buildKey = (parts) => parts.map(p => String(p ?? "").trim().toLowerCase()).join("|");
+  const existingPanelKeys = new Set();
+  const existingCompKeys = new Set();
+  const existingDeliveryCounts = {};
+
+  const hubData = hubSheet.getDataRange().getValues();
+  for (let i = 1; i < hubData.length; i++) {
+    const row = hubData[i];
+    if (!row[0]) continue;
+    const key = buildKey([row[0], row[2], row[4], row[5], row[7], row[8]]);
+    existingPanelKeys.add(key);
+  }
+
+  const compData = compSheet.getDataRange().getValues();
+  for (let i = 1; i < compData.length; i++) {
+    const row = compData[i];
+    if (!row[0]) continue;
+    const key = buildKey([row[0], row[2], row[3], row[4]]);
+    existingCompKeys.add(key);
+  }
+
+  const delivData = delivSheet.getDataRange().getValues();
+  for (let i = 1; i < delivData.length; i++) {
+    const row = delivData[i];
+    if (!row[0]) continue;
+    const key = buildKey([row[0], row[3]]);
+    existingDeliveryCounts[key] = (existingDeliveryCounts[key] || 0) + 1;
+  }
+
   // --- LOOP THROUGH ORDERS ---
   // Start at i=1 to skip header.
   for (let i = 1; i < allOrderData.length; i++) {
@@ -101,15 +134,24 @@ const allocatedUnits = allocMatch ? (parseInt(allocMatch[1], 10) || 0) : 0;
     const productRows = productMap[orderSku] || [];
     if (productRows.length > 0) {
       skuFound = true;
+      const seenPanels = new Set();
+      const seenComps = new Set();
+
       productRows.forEach((prodRow) => {
         const itemName = prodRow[2];      
         const material = String(prodRow[3]).toLowerCase(); 
         const qtyPerUnit = prodRow[6];    
         const totalQty = qtyPerUnit * orderQty;
         const compSKU = String(orderSku).trim().toUpperCase();       
+        const partSignature = `${itemName}|${material}|${prodRow[7]}|${prodRow[8]}`;
+        const panelKey = buildKey([orderId, productName, itemName, prodRow[3], prodRow[4], prodRow[5]]);
+        const compKey = buildKey([orderId, productName, itemName, orderSku]);
 
         // Split Logic
         if (material.includes("component") || material.includes("hardware")) {
+          if (seenComps.has(partSignature)) return;
+          seenComps.add(partSignature);
+          if (existingCompKeys.has(compKey)) return;
           const prefillComps = Math.min(totalQty, (Number(qtyPerUnit) || 1) * allocatedUnits);
 
 rowsForComponents.push([
@@ -125,6 +167,9 @@ rowsForComponents.push([
   ""
 ]);
         } else {
+          if (seenPanels.has(partSignature)) return;
+          seenPanels.add(partSignature);
+          if (existingPanelKeys.has(panelKey)) return;
           const prefillPanels = Math.min(totalQty, (Number(qtyPerUnit) || 1) * allocatedUnits);
 
 rowsForPanels.push([
@@ -147,9 +192,13 @@ rowsForPanels.push([
 
       // ✅ Only create Delivery Hub rows for NON-workshop customers
       if (!isWorkshop) {
-        for (let q = 0; q < qty; q++) {
+        const deliveryKey = buildKey([orderId, productName]);
+        const existingCount = existingDeliveryCounts[deliveryKey] || 0;
+        const remaining = Math.max(0, qty - existingCount);
+        for (let q = 0; q < remaining; q++) {
           rowsForDelivery.push([orderId, customer, address, productName, "", "Pending", "", ""]);
         }
+        existingDeliveryCounts[deliveryKey] = existingCount + remaining;
       }
 
       successCount++;
@@ -209,6 +258,9 @@ orderSheet.getRange(r, statusCol).setValue(prev ? `IMPORTED | ${prev}` : "IMPORT
     Browser.msgBox(`SUCCESS! Imported ${successCount} orders.`);
   } else {
     Browser.msgBox("No new orders found to import.");
+  }
+  } finally {
+    lock.releaseLock();
   }
 }
 
