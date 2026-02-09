@@ -2915,8 +2915,8 @@ function renderShopifyOrdersModal(rows) {
       return `
         <tr style="${busy ? "opacity:0.6;" : ""}">
           <td>
-            <div class="fw-bold">${esc(r.sku)}</div>
-            <div class="small text-muted">${esc(r.productName)}</div>
+            <div class="fw-bold">${esc(r.productName)}</div>
+            <div class="small text-muted">SKU ${esc(r.sku)}</div>
 
             <div class="small mt-1">
               <span class="badge bg-dark me-1">Ordered ${ordered}</span>
