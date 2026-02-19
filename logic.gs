@@ -2157,6 +2157,117 @@ function getMaterialHistory(materialName) {
   return history;
 }
 
+
+function getTrackingHistory(limit) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const maxRows = Math.max(1, Number(limit) || 1500);
+  const entries = [];
+
+  const pullByHeaders = (sheetName, mapFn) => {
+    const sheet = ss.getSheetByName(sheetName);
+    if (!sheet || sheet.getLastRow() < 2) return;
+
+    const data = sheet.getDataRange().getValues();
+    const headers = data[0].map(h => String(h || '').trim().toLowerCase());
+    const map = {};
+    headers.forEach((h, i) => map[h] = i);
+
+    for (let i = 1; i < data.length; i++) {
+      const row = data[i];
+      const entry = mapFn(row, map);
+      if (entry) entries.push(entry);
+    }
+  };
+
+  pullByHeaders('Panel History', (row, map) => {
+    const orderId = row[map['order id']] || '';
+    const timestamp = row[map['timestamp']] || '';
+    const user = row[map['user']] || '';
+    const panel = row[map['panel name']] || '';
+    const product = row[map['product']] || row[map['product name']] || '';
+    const change = row[map['change']] || row[map['change type']] || '';
+    const qty = Number(row[map['quantity']]) || 0;
+    const reason = row[map['reason']] || '';
+
+    if (!timestamp && !orderId && !user && !panel && !change) return null;
+
+    return {
+      source: 'Panel History',
+      orderId: String(orderId || '').trim(),
+      user: String(user || '').trim() || 'Unknown',
+      timestamp: timestamp,
+      item: String(panel || product || 'Panel').trim(),
+      change: qty ? `${change || 'Updated'} (${qty > 0 ? '+' : ''}${qty})` : String(change || 'Updated'),
+      reason: String(reason || '').trim()
+    };
+  });
+
+  pullByHeaders('Stock History', (row, map) => {
+    const timestamp = row[map['timestamp']] || '';
+    const user = row[map['user']] || '';
+    const source = row[map['source']] || 'Stock History';
+    const material = row[map['material']] || '';
+    const changeVal = row[map['change']];
+    const reason = row[map['reason']] || '';
+
+    if (!timestamp && !user && !material && (changeVal === '' || changeVal === null || changeVal === undefined)) return null;
+
+    const orderMatch = String(reason || '').match(/\b(?:order|batch)\s*#?\s*([a-z0-9-]+)/i)
+      || String(material || '').match(/#\s*([a-z0-9-]+)/i);
+
+    const numericChange = Number(changeVal);
+    const changeText = Number.isFinite(numericChange)
+      ? `${numericChange > 0 ? '+' : ''}${numericChange}`
+      : String(changeVal || 'Updated');
+
+    return {
+      source: String(source || 'Stock History').trim(),
+      orderId: orderMatch ? String(orderMatch[1] || '').trim() : '',
+      user: String(user || '').trim() || 'Unknown',
+      timestamp: timestamp,
+      item: String(material || 'Stock Item').trim(),
+      change: changeText,
+      reason: String(reason || '').trim()
+    };
+  });
+
+  entries.sort((a, b) => {
+    const aTime = (a.timestamp instanceof Date) ? a.timestamp.getTime() : new Date(a.timestamp).getTime();
+    const bTime = (b.timestamp instanceof Date) ? b.timestamp.getTime() : new Date(b.timestamp).getTime();
+    return (Number.isFinite(bTime) ? bTime : 0) - (Number.isFinite(aTime) ? aTime : 0);
+  });
+
+  return entries.slice(0, maxRows).map(e => {
+    const rawTime = e.timestamp;
+    let timeMs = null;
+    let dateStr = '';
+
+    if (rawTime instanceof Date) {
+      timeMs = rawTime.getTime();
+      dateStr = Utilities.formatDate(rawTime, Session.getScriptTimeZone(), 'dd/MM/yyyy HH:mm');
+    } else {
+      const parsed = new Date(rawTime);
+      if (!isNaN(parsed.getTime())) {
+        timeMs = parsed.getTime();
+        dateStr = Utilities.formatDate(parsed, Session.getScriptTimeZone(), 'dd/MM/yyyy HH:mm');
+      } else {
+        dateStr = String(rawTime || '');
+      }
+    }
+
+    return {
+      source: e.source,
+      orderId: e.orderId,
+      user: e.user,
+      dateStr: dateStr,
+      timeMs: timeMs,
+      item: e.item,
+      change: e.change,
+      reason: e.reason
+    };
+  });
+}
+
 // --- AGGREGATED FINISHED GOODS LOGIC (Customer + SKU) ---
 
 function checkProductCompletion(orderId, productName) {
