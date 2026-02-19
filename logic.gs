@@ -621,8 +621,8 @@ function processComponentBatch(updates) {
         if (nameKey && stockMap[nameKey]) stockMap[nameKey].qty = newStockQty;
 
         const productSku = productSkuMap[`${orderId}||${productName}`.toLowerCase()] || "";
-        const reason = `Allocated to ${productSku || productName || "Product"}`;
-        logStockTransaction(compName || "Component", -delta, reason, orderId || "Project");
+        const reason = `Allocated to ${productSku || productName || "Product"}${orderId ? ` (Order ${orderId})` : ""}`;
+        logStockTransaction(compName || "Component", -delta, reason, "Component Stock");
       }
 
       sheet.getRange(rowIndex, 8).setValue(next);     // Packed
@@ -1482,6 +1482,33 @@ if (normTxt(row[4]) !== "") continue; // already assigned
 }
 
 
+function getDeliveryHistorySheet_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName("Delivery History");
+  if (!sheet) sheet = ss.insertSheet("Delivery History");
+
+  if (sheet.getLastRow() === 0) {
+    sheet.appendRow(["Timestamp", "User", "Source", "Order ID", "Item", "Change", "Reason"]);
+  }
+
+  return sheet;
+}
+
+function logDeliveryFittingHistory_(orderId, productName, newStatus, qty, roomName, userEmail, timestamp) {
+  if (newStatus !== "Delivered" && newStatus !== "Fitted") return;
+
+  const sheet = getDeliveryHistorySheet_();
+  const safeQty = Math.max(1, Number(qty) || 1);
+  const safeOrder = String(orderId || "").trim();
+  const safeItem = String(productName || "").trim() || "Unknown Product";
+  const safeUser = String(userEmail || "").trim() || "Workshop App";
+  const safeRoom = String(roomName || "").trim();
+  const ts = timestamp instanceof Date ? timestamp : new Date();
+
+  const reason = safeRoom ? `Room: ${safeRoom}` : "";
+  sheet.appendRow([ts, safeUser, "Delivery and Fitting", safeOrder, safeItem, `${newStatus} (+${safeQty})`, reason]);
+}
+
 // 8. DELIVERY: UPDATE STATUS (DIAGNOSTIC VERSION)
 function updateDeliveryStatus(orderId, roomName, productName, oldStatus, newStatus, qtyToUpdate) {
   roomName = canonicalRoomName_(roomName);
@@ -1558,6 +1585,8 @@ if (normTxt(row[0]) === normTxt(orderId) && normTxt(row[3]) === normTxt(productN
   }
 
   if (updated === 0) return "Error: No matching items found to update.";
+
+  logDeliveryFittingHistory_(orderId, productName, newStatus, updated, roomName, user, ts);
   return "SUCCESS";
 
     } finally {
@@ -2155,6 +2184,150 @@ function getMaterialHistory(materialName) {
     }
   }
   return history;
+}
+
+
+function getTrackingHistory(limit) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const maxRows = Math.max(1, Number(limit) || 1500);
+  const entries = [];
+
+  const pullByHeaders = (sheetName, mapFn) => {
+    const sheet = ss.getSheetByName(sheetName);
+    if (!sheet || sheet.getLastRow() < 2) return;
+
+    const data = sheet.getDataRange().getValues();
+    const headers = data[0].map(h => String(h || '').trim().toLowerCase());
+    const map = {};
+    headers.forEach((h, i) => map[h] = i);
+
+    for (let i = 1; i < data.length; i++) {
+      const row = data[i];
+      const entry = mapFn(row, map);
+      if (entry) entries.push(entry);
+    }
+  };
+
+  pullByHeaders('Panel History', (row, map) => {
+    const orderId = row[map['order id']] || '';
+    const timestamp = row[map['timestamp']] || '';
+    const user = row[map['user']] || '';
+    const panel = row[map['panel name']] || '';
+    const product = row[map['product']] || row[map['product name']] || '';
+    const change = row[map['change']] || row[map['change type']] || '';
+    const qty = Number(row[map['quantity']]) || 0;
+    const reason = row[map['reason']] || '';
+
+    if (!timestamp && !orderId && !user && !panel && !change) return null;
+
+    return {
+      source: 'Panel History',
+      orderId: String(orderId || '').trim(),
+      user: String(user || '').trim() || 'Unknown',
+      timestamp: timestamp,
+      item: String(panel || product || 'Panel').trim(),
+      change: qty ? `${change || 'Updated'} (${qty > 0 ? '+' : ''}${qty})` : String(change || 'Updated'),
+      reason: String(reason || '').trim()
+    };
+  });
+
+  pullByHeaders('Stock History', (row, map) => {
+    const timestamp = row[map['timestamp']] || '';
+    const user = row[map['user']] || '';
+    const sourceRaw = String(row[map['source']] || 'Stock History').trim();
+    const material = row[map['material']] || '';
+    const changeVal = row[map['change']];
+    const reason = row[map['reason']] || '';
+
+    if (!timestamp && !user && !material && (changeVal === '' || changeVal === null || changeVal === undefined)) return null;
+
+    const sourceLooksLikeOrderId = /^#?[a-z0-9-]+$/i.test(sourceRaw) && /^#?\d+/i.test(sourceRaw);
+    const sourceOrderMatch = sourceRaw.match(/^#?([a-z0-9-]+)$/i);
+    const reasonOrderMatch = String(reason || '').match(/\b(?:order|batch)\s*#?\s*([a-z0-9-]+)/i)
+      || String(reason || '').match(/#\s*([a-z0-9-]+)/i);
+    const materialOrderMatch = String(material || '').match(/#\s*([a-z0-9-]+)/i);
+
+    const normalizedSource = sourceLooksLikeOrderId
+      ? (String(material || '').toLowerCase().includes('component') ? 'Component Stock' : 'Stock History')
+      : sourceRaw;
+
+    const resolvedOrderId = (reasonOrderMatch && reasonOrderMatch[1])
+      || (materialOrderMatch && materialOrderMatch[1])
+      || (sourceLooksLikeOrderId && sourceOrderMatch ? sourceOrderMatch[1] : '');
+
+    const numericChange = Number(changeVal);
+    const changeText = Number.isFinite(numericChange)
+      ? `${numericChange > 0 ? '+' : ''}${numericChange}`
+      : String(changeVal || 'Updated');
+
+    return {
+      source: normalizedSource,
+      orderId: String(resolvedOrderId || '').trim(),
+      user: String(user || '').trim() || 'Unknown',
+      timestamp: timestamp,
+      item: String(material || 'Stock Item').trim(),
+      change: changeText,
+      reason: String(reason || '').trim()
+    };
+  });
+
+  pullByHeaders('Delivery History', (row, map) => {
+    const timestamp = row[map['timestamp']] || '';
+    const user = row[map['user']] || '';
+    const source = row[map['source']] || 'Delivery and Fitting';
+    const orderId = row[map['order id']] || '';
+    const item = row[map['item']] || row[map['product']] || '';
+    const change = row[map['change']] || '';
+    const reason = row[map['reason']] || '';
+
+    if (!timestamp && !user && !orderId && !item && !change) return null;
+
+    return {
+      source: String(source || 'Delivery and Fitting').trim(),
+      orderId: String(orderId || '').trim(),
+      user: String(user || '').trim() || 'Unknown',
+      timestamp: timestamp,
+      item: String(item || 'Product').trim(),
+      change: String(change || 'Updated').trim(),
+      reason: String(reason || '').trim()
+    };
+  });
+
+  entries.sort((a, b) => {
+    const aTime = (a.timestamp instanceof Date) ? a.timestamp.getTime() : new Date(a.timestamp).getTime();
+    const bTime = (b.timestamp instanceof Date) ? b.timestamp.getTime() : new Date(b.timestamp).getTime();
+    return (Number.isFinite(bTime) ? bTime : 0) - (Number.isFinite(aTime) ? aTime : 0);
+  });
+
+  return entries.slice(0, maxRows).map(e => {
+    const rawTime = e.timestamp;
+    let timeMs = null;
+    let dateStr = '';
+
+    if (rawTime instanceof Date) {
+      timeMs = rawTime.getTime();
+      dateStr = Utilities.formatDate(rawTime, Session.getScriptTimeZone(), 'dd/MM/yyyy HH:mm');
+    } else {
+      const parsed = new Date(rawTime);
+      if (!isNaN(parsed.getTime())) {
+        timeMs = parsed.getTime();
+        dateStr = Utilities.formatDate(parsed, Session.getScriptTimeZone(), 'dd/MM/yyyy HH:mm');
+      } else {
+        dateStr = String(rawTime || '');
+      }
+    }
+
+    return {
+      source: e.source,
+      orderId: e.orderId,
+      user: e.user,
+      dateStr: dateStr,
+      timeMs: timeMs,
+      item: e.item,
+      change: e.change,
+      reason: e.reason
+    };
+  });
 }
 
 // --- AGGREGATED FINISHED GOODS LOGIC (Customer + SKU) ---
