@@ -19,6 +19,8 @@
   let currentDelivTab = "bucket";
   let currentCncTab = "load";
   let currentCncWoodSubTab = 'sheets';
+  let trackingData = [];
+  let filteredTrackingData = [];
   let cncWoodViewData = null; // holds the last filtered list shown in CNC
   let currentDamageRowIndex = null;
   // --- Robust saving / offline handling ---
@@ -549,6 +551,11 @@ function updateBreadcrumbsForView(viewId) {
   return;
 }
 
+  if (viewId === "view-tracking") {
+    setBreadcrumbs([ordersCrumb, { label: "Tracking" }]);
+    return;
+  }
+
 
   // fallback
   setBreadcrumbs([ordersCrumb]);
@@ -729,6 +736,89 @@ function updateBreadcrumbsForView(viewId) {
   function openStockLists() {
   showView('view-stocklists');
   switchStockTab('wood');
+}
+
+
+function openTrackingView() {
+  showView('view-tracking');
+  loadTrackingHistory();
+}
+
+function loadTrackingHistory() {
+  const tbody = document.getElementById('tracking-table-body');
+  if (tbody) tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">Loading history...</td></tr>';
+
+  google.script.run
+    .withSuccessHandler(rows => {
+      trackingData = Array.isArray(rows) ? rows : [];
+      applyTrackingFilters();
+    })
+    .withFailureHandler(err => {
+      if (tbody) {
+        tbody.innerHTML = `<tr><td colspan="7" class="text-center text-danger py-4">Failed to load tracking history: ${err.message || err}</td></tr>`;
+      }
+    })
+    .getTrackingHistory(2000);
+}
+
+function applyTrackingFilters() {
+  const userFilter = String(document.getElementById('tracking-filter-user')?.value || '').trim().toLowerCase();
+  const orderFilter = String(document.getElementById('tracking-filter-order')?.value || '').trim().toLowerCase();
+  const sortField = document.getElementById('tracking-sort-field')?.value || 'date';
+  const sortDir = document.getElementById('tracking-sort-dir')?.value || 'desc';
+
+  filteredTrackingData = (trackingData || []).filter(r => {
+    const userTxt = String(r.user || '').toLowerCase();
+    const orderTxt = String(r.orderId || '').toLowerCase();
+
+    if (userFilter && !userTxt.includes(userFilter)) return false;
+    if (orderFilter && !orderTxt.includes(orderFilter)) return false;
+    return true;
+  });
+
+  filteredTrackingData.sort((a, b) => {
+    let aVal = '';
+    let bVal = '';
+
+    if (sortField === 'date') {
+      aVal = Number(a.timeMs) || 0;
+      bVal = Number(b.timeMs) || 0;
+    } else if (sortField === 'user') {
+      aVal = String(a.user || '').toLowerCase();
+      bVal = String(b.user || '').toLowerCase();
+    } else {
+      aVal = String(a.orderId || '').toLowerCase();
+      bVal = String(b.orderId || '').toLowerCase();
+    }
+
+    if (aVal < bVal) return sortDir === 'asc' ? -1 : 1;
+    if (aVal > bVal) return sortDir === 'asc' ? 1 : -1;
+    return 0;
+  });
+
+  renderTrackingRows();
+}
+
+function renderTrackingRows() {
+  const tbody = document.getElementById('tracking-table-body');
+  if (!tbody) return;
+
+  if (!filteredTrackingData.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">No tracking entries found for the selected filters.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = filteredTrackingData.map(r => `
+    <tr>
+      <td class="ps-3">${r.dateStr || ''}</td>
+      <td>${r.user || ''}</td>
+      <td>${r.orderId || '—'}</td>
+      <td>${r.source || ''}</td>
+      <td>${r.item || ''}</td>
+      <td>${r.change || ''}</td>
+      <td class="pe-3">${r.reason || ''}</td>
+    </tr>
+  `).join('');
 }
 
 function switchStockTab(tab) {
