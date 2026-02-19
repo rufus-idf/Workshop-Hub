@@ -756,6 +756,7 @@ function loadTrackingHistory() {
   google.script.run
     .withSuccessHandler(rows => {
       trackingData = Array.isArray(rows) ? rows : [];
+      refreshTrackingSourceFilterOptions();
       applyTrackingFilters();
     })
     .withFailureHandler(err => {
@@ -766,18 +767,37 @@ function loadTrackingHistory() {
     .getTrackingHistory(2000);
 }
 
+function refreshTrackingSourceFilterOptions() {
+  const selectEl = document.getElementById('tracking-filter-source');
+  if (!selectEl) return;
+
+  const previous = String(selectEl.value || '');
+  const sources = Array.from(new Set((trackingData || [])
+    .map(r => String(r.source || '').trim())
+    .filter(Boolean)))
+    .sort((a, b) => a.localeCompare(b));
+
+  selectEl.innerHTML = '<option value="">All Sources</option>' +
+    sources.map(src => `<option value="${src}">${src}</option>`).join('');
+
+  if (previous && sources.includes(previous)) selectEl.value = previous;
+}
+
 function applyTrackingFilters() {
   const userFilter = String(document.getElementById('tracking-filter-user')?.value || '').trim().toLowerCase();
   const orderFilter = String(document.getElementById('tracking-filter-order')?.value || '').trim().toLowerCase();
+  const sourceFilter = String(document.getElementById('tracking-filter-source')?.value || '').trim().toLowerCase();
   const sortField = document.getElementById('tracking-sort-field')?.value || 'date';
   const sortDir = document.getElementById('tracking-sort-dir')?.value || 'desc';
 
   filteredTrackingData = (trackingData || []).filter(r => {
     const userTxt = String(r.user || '').toLowerCase();
     const orderTxt = String(r.orderId || '').toLowerCase();
+    const sourceTxt = String(r.source || '').toLowerCase();
 
     if (userFilter && !userTxt.includes(userFilter)) return false;
     if (orderFilter && !orderTxt.includes(orderFilter)) return false;
+    if (sourceFilter && sourceTxt !== sourceFilter) return false;
     return true;
   });
 

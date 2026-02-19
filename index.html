@@ -372,6 +372,12 @@
           <label class="small text-muted mb-1">Order ID</label>
           <input id="tracking-filter-order" type="text" class="form-control" placeholder="Filter by order ID" oninput="applyTrackingFilters()">
         </div>
+        <div class="col-12 col-md-4">
+          <label class="small text-muted mb-1">Source</label>
+          <select id="tracking-filter-source" class="form-select" onchange="applyTrackingFilters()">
+            <option value="">All Sources</option>
+          </select>
+        </div>
         <div class="col-6 col-md-2">
           <label class="small text-muted mb-1">Sort By</label>
           <select id="tracking-sort-field" class="form-select" onchange="applyTrackingFilters()">
