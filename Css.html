@@ -361,23 +361,28 @@
 /* Breadcrumbs */
 .breadcrumb-bar{
   display:none;               /* hidden until JS mounts it into a header */
-  gap:6px;
+  gap:8px;
   flex-wrap:wrap;
   align-items:center;
-  font-size:0.85rem;
-  color: var(--text-muted);
+  justify-content:center;
+  width:100%;
+  margin-top:6px;
+  font-size:0.98rem;
+  color: #495057;
+  font-weight:600;
 }
 .breadcrumb-bar.active{ display:flex; }
 
 .breadcrumb-bar a{
-  color: var(--text-muted);
+  color: #495057;
   text-decoration:none;
-  font-weight:600;
+  font-weight:700;
 }
 .breadcrumb-bar a:hover{ text-decoration:underline; }
-.breadcrumb-sep{ opacity:0.5; }
+.breadcrumb-sep{ opacity:0.6; font-weight:700; }
 
-.breadcrumb-slot { margin-top: 4px; }
+.breadcrumb-slot { margin-top: 4px; width: 100%; }
+.breadcrumb-slot:empty { display: none; }
 
 /* --- FIX: make taps more reliable on mobile --- */
 .btn-squircle, button {
