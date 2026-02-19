@@ -367,6 +367,8 @@
   justify-content:center;
   width:100%;
   margin-top:6px;
+  position: relative;
+  left: -28px;
   font-size:0.98rem;
   color: #495057;
   font-weight:600;
@@ -383,6 +385,12 @@
 
 .breadcrumb-slot { margin-top: 4px; width: 100%; }
 .breadcrumb-slot:empty { display: none; }
+
+@media (max-width: 768px) {
+  .breadcrumb-bar {
+    left: -14px;
+  }
+}
 
 /* --- FIX: make taps more reliable on mobile --- */
 .btn-squircle, button {
@@ -550,3 +558,4 @@
     }
 
 </style>
+
