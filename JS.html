@@ -458,10 +458,12 @@ function mountBreadcrumb(viewId) {
   const view = document.getElementById(viewId);
   if (!crumb || !view) return;
 
+  const slot = view.querySelector(".breadcrumb-slot");
   const header = view.querySelector(".sticky-top-bar") || view.querySelector(".app-header");
-  if (!header) return;
+  const target = slot || header;
+  if (!target) return;
 
-  if (!header.contains(crumb)) header.appendChild(crumb);
+  if (!target.contains(crumb)) target.appendChild(crumb);
 }
 
 // Builds breadcrumb path based on current view + currentOrder/currentProduct/etc.
@@ -478,7 +480,7 @@ function updateBreadcrumbsForView(viewId) {
 
   // Jobs screen
   if (viewId === "view-jobs") {
-    setBreadcrumbs([ordersCrumb]);
+    setBreadcrumbs([]);
     return;
   }
 
