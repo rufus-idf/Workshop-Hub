@@ -102,6 +102,7 @@
         </span>
       </button>
       <button class="btn btn-outline-dark header-action-btn" onclick="openTrackingView()">📋 Tracking</button>
+      <button class="btn btn-outline-dark header-action-btn" onclick="openHelpBooklet()">📘 Help Booklet</button>
     </div>
 
     <div id="orders-pending-banner" class="alert alert-danger py-2 px-3 mb-3 hidden" role="status" aria-live="polite">
@@ -350,6 +351,83 @@
     </div>
   </div>
 
+</div>
+
+<div id="view-help-booklet" class="hidden">
+  <div class="d-flex align-items-center sticky-top-bar">
+    <button class="btn btn-light rounded-circle shadow-sm me-3" style="width:45px; height:45px;" onclick="showView('view-jobs')">🡐</button>
+    <div>
+      <h6 class="text-muted small mb-0">GUIDE</h6>
+      <h4 class="mb-0">Help Booklet</h4>
+    </div>
+  </div>
+
+  <div class="alert alert-info border-0 shadow-sm">
+    <strong>Welcome to Workshop Hub.</strong> This booklet explains each screen and the typical flow for day-to-day workshop use.
+  </div>
+
+  <div class="help-booklet-section card p-3">
+    <h5 class="mb-2">1) Daily Start-Up</h5>
+    <ul class="mb-0">
+      <li>Open <strong>Workshop Hub</strong> and check the <strong>Online</strong> badge in the top-right corner.</li>
+      <li>Tap the <strong>↻ refresh</strong> button to pull the latest jobs and stock updates.</li>
+      <li>Use <strong>Orders</strong> to import any waiting Shopify jobs before production begins.</li>
+    </ul>
+  </div>
+
+  <div class="help-booklet-section card p-3">
+    <h5 class="mb-2">2) Job List (Home Screen)</h5>
+    <ul class="mb-0">
+      <li>Use the tabs to switch between <strong>Active</strong>, <strong>Stock</strong> and <strong>History</strong> jobs.</li>
+      <li>Tap a project card to open project operations.</li>
+      <li>Progress bars and badges show delivery and manufacturing status at a glance.</li>
+    </ul>
+  </div>
+
+  <div class="help-booklet-section card p-3">
+    <h5 class="mb-2">3) Project Operations</h5>
+    <ul class="mb-0">
+      <li><strong>Manufacturing:</strong> update panel/component progress through Cut, Processed, Edge Finish and Packed.</li>
+      <li><strong>Delivery &amp; Fitting:</strong> move packed items into Bucket/Rooms and mark delivered or fitted quantities.</li>
+      <li><strong>CNC Station:</strong> deduct sheet stock as cuts are completed so inventory remains accurate.</li>
+    </ul>
+  </div>
+
+  <div class="help-booklet-section card p-3">
+    <h5 class="mb-2">4) Stock Lists</h5>
+    <ul class="mb-0">
+      <li>Check live inventory for <strong>Wood</strong>, <strong>Components</strong>, <strong>Edge</strong>, and <strong>Furniture</strong>.</li>
+      <li>Use search fields to find materials quickly.</li>
+      <li>Use sub-tabs (for example Full Sheets, On Order, Offcuts) to view exact stock buckets.</li>
+    </ul>
+  </div>
+
+  <div class="help-booklet-section card p-3">
+    <h5 class="mb-2">5) Orders</h5>
+    <ul class="mb-0">
+      <li>Open <strong>Orders</strong> when the red waiting badge appears.</li>
+      <li>Review pending Shopify orders and import them into Workshop Hub.</li>
+      <li>After import, confirm the job appears in the correct home tab.</li>
+    </ul>
+  </div>
+
+  <div class="help-booklet-section card p-3">
+    <h5 class="mb-2">6) Tracking</h5>
+    <ul class="mb-0">
+      <li>Use Tracking to review who changed what, and when.</li>
+      <li>Filter by user, order, or source to investigate specific actions.</li>
+      <li>Sort results by newest/oldest when auditing changes.</li>
+    </ul>
+  </div>
+
+  <div class="help-booklet-section card p-3">
+    <h5 class="mb-2">7) Good Workshop Habits</h5>
+    <ul class="mb-0">
+      <li>Update quantities immediately after completing work to keep everyone synced.</li>
+      <li>Record damage with a clear reason so replacement decisions are fast.</li>
+      <li>Before dispatch, verify Bucket/Rooms and delivered quantities match what is physically loaded.</li>
+    </ul>
+  </div>
 </div>
 
 <div id="view-tracking" class="hidden">
