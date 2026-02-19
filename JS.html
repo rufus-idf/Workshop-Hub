@@ -210,8 +210,8 @@ function getPanelDamageInfo(panelData, prodData) {
   // DEFINITIONS
   const descriptions = {
     cut: "Check panel size against cutting list.",
-    processed: "Drilling, Routing complete (mark even if not required).",
-    edgeFinish: "Edging applied/cleaned (or Sanded for Ply).",
+    processed: "CNC work complete (drilling/routing as required).",
+    edgeFinish: "Edge finishing complete (or sanded for ply).",
     packed: "Quality checked and wrapped."
   };
 
@@ -1837,7 +1837,7 @@ alert(
             <div class="fw-bold text-dark" style="font-size: 1.1rem;">${p.panelName}</div>
             <div class="small text-muted">Required: ${damageInfo.required} • Damaged: ${damageInfo.damaged} • Total: ${damageInfo.total}</div>
             <div class="small text-muted mt-1">
-              ${cut} Cut — ${proc} Processed — ${fin} Finished — ${pack} Packed
+              ${cut} Cut — ${proc} CNC'd — ${fin} Edge Finished — ${pack} Packed
             </div>
           </div>
           <div class="d-flex align-items-center">
@@ -1890,13 +1890,13 @@ alert(
            ${renderControl('Cut', 'cut', panelData.qtyCut, panelData.rowIndex, 'btn-cut')}
         </div>
         <div class="mb-4">
-           ${renderControl('Process', 'processed', panelData.qtyProcessed, panelData.rowIndex, 'btn-proc')}
+           ${renderControl("CNC'd", 'processed', panelData.qtyProcessed, panelData.rowIndex, 'btn-proc')}
         </div>
         <div class="mb-4">
-           ${renderControl('Finish', 'edgeFinish', panelData.qtyEdgeFinish, panelData.rowIndex, 'btn-finish')}
+           ${renderControl('Edge Finished', 'edgeFinish', panelData.qtyEdgeFinish, panelData.rowIndex, 'btn-finish')}
         </div>
         <div class="mb-4">
-           ${renderControl('Pack', 'packed', panelData.qtyPacked, panelData.rowIndex, 'btn-pack')}
+           ${renderControl('Packed', 'packed', panelData.qtyPacked, panelData.rowIndex, 'btn-pack')}
         </div>
         <button class="btn btn-warning w-100 rounded-pill fw-bold" onclick="openDamageModal(null, ${panelData.rowIndex})">
           ⚠️ Mark Damaged Panel
@@ -2087,14 +2087,17 @@ function submitDamage() {
     // 1. FORWARD LOGIC
     if (change > 0) {
         if (type === 'processed' && newVal > getVal('cut')) { alert("⚠️ Restriction: You must CUT these panels first."); return; }
-        if (type === 'edgeFinish' && newVal > getVal('processed')) { alert("⚠️ Restriction: You must PROCESS these panels first."); return; }
-        if (type === 'packed' && newVal > getVal('edgeFinish')) { alert("⚠️ Restriction: You must EDGE these panels first."); return; }
+        if (type === 'edgeFinish' && newVal > getVal('cut')) { alert("⚠️ Restriction: You must CUT these panels first."); return; }
+        if (type === 'packed' && newVal > getVal('processed')) { alert("⚠️ Restriction: Packed quantity cannot exceed CNC'd quantity."); return; }
+        if (type === 'packed' && newVal > getVal('edgeFinish')) { alert("⚠️ Restriction: Packed quantity cannot exceed Edge Finished quantity."); return; }
     }
 
     // 2. BACKWARD LOGIC
     if (change < 0) {
-        if (type === 'cut' && newVal < getVal('processed')) { alert("⛔ Blocked: Reduce 'Processed' count first."); return; }
-        if (type === 'processed' && newVal < getVal('edgeFinish')) { alert("⛔ Blocked: Reduce 'Edged' count first."); return; }
+        if (type === 'cut' && newVal < getVal('processed')) { alert("⛔ Blocked: Reduce 'CNC\'d' count first."); return; }
+        if (type === 'cut' && newVal < getVal('edgeFinish')) { alert("⛔ Blocked: Reduce 'Edge Finished' count first."); return; }
+        if (type === 'cut' && newVal < getVal('packed')) { alert("⛔ Blocked: Reduce 'Packed' count first."); return; }
+        if (type === 'processed' && newVal < getVal('packed')) { alert("⛔ Blocked: Reduce 'Packed' count first."); return; }
         if (type === 'edgeFinish' && newVal < getVal('packed')) { alert("⛔ Blocked: Reduce 'Packed' count first."); return; }
     }
     
