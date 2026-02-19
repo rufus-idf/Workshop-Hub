@@ -558,6 +558,11 @@ function updateBreadcrumbsForView(viewId) {
     return;
   }
 
+  if (viewId === "view-help-booklet") {
+    setBreadcrumbs([ordersCrumb, { label: "Help Booklet" }]);
+    return;
+  }
+
 
   // fallback
   setBreadcrumbs([ordersCrumb]);
@@ -747,6 +752,10 @@ function updateBreadcrumbsForView(viewId) {
 function openTrackingView() {
   showView('view-tracking');
   loadTrackingHistory();
+}
+
+function openHelpBooklet() {
+  showView('view-help-booklet');
 }
 
 function loadTrackingHistory() {
