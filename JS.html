@@ -13,6 +13,7 @@
   let pendingCompUpdates = {};
   let compSaveTimer = null;
   let currentViewId = 'view-jobs';
+  let currentHelpSection = 'intro';
   let breadcrumbs = [];
   let currentPanelName = "";
   let currentStockTab = "wood";
@@ -756,6 +757,21 @@ function openTrackingView() {
 
 function openHelpBooklet() {
   showView('view-help-booklet');
+  openHelpSection(currentHelpSection || 'intro');
+}
+
+function openHelpSection(sectionId) {
+  const safeId = String(sectionId || 'intro').trim() || 'intro';
+  currentHelpSection = safeId;
+
+  document.querySelectorAll('#view-help-booklet .help-page').forEach(page => page.classList.add('hidden'));
+  document.querySelectorAll('#view-help-booklet .help-nav-btn').forEach(btn => btn.classList.remove('active'));
+
+  const page = document.getElementById(`help-page-${safeId}`);
+  const navBtn = document.getElementById(`help-nav-${safeId}`);
+
+  if (page) page.classList.remove('hidden');
+  if (navBtn) navBtn.classList.add('active');
 }
 
 function loadTrackingHistory() {

@@ -362,71 +362,217 @@
     </div>
   </div>
 
-  <div class="alert alert-info border-0 shadow-sm">
-    <strong>Welcome to Workshop Hub.</strong> This booklet explains each screen and the typical flow for day-to-day workshop use.
-  </div>
+  <div class="help-booklet-layout">
+    <aside class="help-booklet-contents card border-0 shadow-sm">
+      <div class="help-booklet-contents-title">Contents</div>
+      <button id="help-nav-intro" class="help-nav-btn active" onclick="openHelpSection('intro')">1. Introduction & Daily Start</button>
+      <button id="help-nav-jobflow" class="help-nav-btn" onclick="openHelpSection('jobflow')">2. Job Flow & Screen Guide</button>
+      <button id="help-nav-manufacturing" class="help-nav-btn" onclick="openHelpSection('manufacturing')">3. Manufacturing Workflow</button>
+      <button id="help-nav-damage" class="help-nav-btn" onclick="openHelpSection('damage')">4. Damaged Panels Procedure</button>
+      <button id="help-nav-delivery" class="help-nav-btn" onclick="openHelpSection('delivery')">5. Delivery, Bucket & Rooms</button>
+      <button id="help-nav-workshop-stock" class="help-nav-btn" onclick="openHelpSection('workshop-stock')">6. Workshop Stock Jobs</button>
+      <button id="help-nav-cnc" class="help-nav-btn" onclick="openHelpSection('cnc')">7. CNC & Stock Deductions</button>
+      <button id="help-nav-inventory" class="help-nav-btn" onclick="openHelpSection('inventory')">8. Inventory & Replenishment</button>
+      <button id="help-nav-orders" class="help-nav-btn" onclick="openHelpSection('orders')">9. Orders & Tracking</button>
+      <button id="help-nav-qa" class="help-nav-btn" onclick="openHelpSection('qa')">10. End-of-Day Checklist</button>
+    </aside>
 
-  <div class="help-booklet-section card p-3">
-    <h5 class="mb-2">1) Daily Start-Up</h5>
-    <ul class="mb-0">
-      <li>Open <strong>Workshop Hub</strong> and check the <strong>Online</strong> badge in the top-right corner.</li>
-      <li>Tap the <strong>↻ refresh</strong> button to pull the latest jobs and stock updates.</li>
-      <li>Use <strong>Orders</strong> to import any waiting Shopify jobs before production begins.</li>
-    </ul>
-  </div>
+    <section class="help-booklet-pages">
+      <article id="help-page-intro" class="help-page card border-0 shadow-sm">
+        <div class="help-page-header">
+          <span class="help-page-kicker">Page 1 of 10</span>
+          <h3>Introduction & Daily Start</h3>
+        </div>
+        <div class="help-page-body">
+          <p>This booklet is for workshop operators and fit-out teams. It explains how to use Workshop Hub from first login through to dispatch, using only front-end actions you perform in the app.</p>
+          <h6>Start of shift routine</h6>
+          <ol>
+            <li>Confirm the top-right badge is <strong>Online</strong> before editing anything.</li>
+            <li>Press <strong>↻</strong> to refresh and pull latest job, stock and tracking updates.</li>
+            <li>Check the <strong>Orders</strong> button for waiting imports (red indicator).</li>
+            <li>Open <strong>Active</strong> jobs and identify today’s highest-priority projects.</li>
+          </ol>
+          <div class="help-tip"><strong>Tip:</strong> If multiple staff are working at once, refresh before major updates (start/finish, deliveries, room moves).</div>
+        </div>
+      </article>
 
-  <div class="help-booklet-section card p-3">
-    <h5 class="mb-2">2) Job List (Home Screen)</h5>
-    <ul class="mb-0">
-      <li>Use the tabs to switch between <strong>Active</strong>, <strong>Stock</strong> and <strong>History</strong> jobs.</li>
-      <li>Tap a project card to open project operations.</li>
-      <li>Progress bars and badges show delivery and manufacturing status at a glance.</li>
-    </ul>
-  </div>
+      <article id="help-page-jobflow" class="help-page card border-0 shadow-sm hidden">
+        <div class="help-page-header">
+          <span class="help-page-kicker">Page 2 of 10</span>
+          <h3>Job Flow & Screen Guide</h3>
+        </div>
+        <div class="help-page-body">
+          <h6>Home tabs</h6>
+          <ul>
+            <li><strong>Client Jobs:</strong> live customer work in progress.</li>
+            <li><strong>Stock Builds:</strong> internal manufacturing jobs such as <strong>Workshop Stock</strong>.</li>
+            <li><strong>Completed:</strong> closed jobs for reference.</li>
+          </ul>
+          <h6>Project drilldown</h6>
+          <p>Tap a job card to open <strong>Operations</strong>, then choose one of three paths:</p>
+          <ul>
+            <li><strong>Manufacturing</strong> for panel/component production updates.</li>
+            <li><strong>Delivery & Fitting</strong> for bucket/room allocation and site status.</li>
+            <li><strong>CNC Station</strong> for loading sheet usage and stock deductions.</li>
+          </ul>
+          <p>Use breadcrumbs at the top to jump back without losing orientation.</p>
+        </div>
+      </article>
 
-  <div class="help-booklet-section card p-3">
-    <h5 class="mb-2">3) Project Operations</h5>
-    <ul class="mb-0">
-      <li><strong>Manufacturing:</strong> update panel/component progress through Cut, Processed, Edge Finish and Packed.</li>
-      <li><strong>Delivery &amp; Fitting:</strong> move packed items into Bucket/Rooms and mark delivered or fitted quantities.</li>
-      <li><strong>CNC Station:</strong> deduct sheet stock as cuts are completed so inventory remains accurate.</li>
-    </ul>
-  </div>
+      <article id="help-page-manufacturing" class="help-page card border-0 shadow-sm hidden">
+        <div class="help-page-header">
+          <span class="help-page-kicker">Page 3 of 10</span>
+          <h3>Manufacturing Workflow (Panels & Components)</h3>
+        </div>
+        <div class="help-page-body">
+          <h6>Panels</h6>
+          <ul>
+            <li>Use search to find panel rows quickly by name/SKU.</li>
+            <li>Update each stage as work is completed: <strong>Cut → Processed → Edge Finish → Packed</strong>.</li>
+            <li>Packed quantity drives readiness for downstream delivery workflows.</li>
+          </ul>
+          <h6>Components</h6>
+          <ul>
+            <li>Mark hardware and fittings as packed as they are prepared.</li>
+            <li>If panel sets are complete but components are short, manufactured units are still limited.</li>
+          </ul>
+          <div class="help-tip"><strong>Important:</strong> Update quantities immediately after a station completes work. Delayed updates create false readiness in other areas.</div>
+        </div>
+      </article>
 
-  <div class="help-booklet-section card p-3">
-    <h5 class="mb-2">4) Stock Lists</h5>
-    <ul class="mb-0">
-      <li>Check live inventory for <strong>Wood</strong>, <strong>Components</strong>, <strong>Edge</strong>, and <strong>Furniture</strong>.</li>
-      <li>Use search fields to find materials quickly.</li>
-      <li>Use sub-tabs (for example Full Sheets, On Order, Offcuts) to view exact stock buckets.</li>
-    </ul>
-  </div>
+      <article id="help-page-damage" class="help-page card border-0 shadow-sm hidden">
+        <div class="help-page-header">
+          <span class="help-page-kicker">Page 4 of 10</span>
+          <h3>Damaged Panels Procedure</h3>
+        </div>
+        <div class="help-page-body">
+          <p>Use the panel damage workflow whenever material is unusable due to chips, scratches, incorrect machining, transport damage, or handling errors.</p>
+          <h6>How to record damage</h6>
+          <ol>
+            <li>Open the affected panel row.</li>
+            <li>Tap the <strong>damage</strong> action button.</li>
+            <li>Enter <strong>Quantity Damaged</strong> and a clear <strong>Reason</strong>.</li>
+            <li>Submit to log the issue and keep counts accurate.</li>
+          </ol>
+          <h6>Best-practice reason notes</h6>
+          <ul>
+            <li>Good: “Front edge chipped during edging pass; 1pc re-cut required.”</li>
+            <li>Poor: “Damaged.” (too vague for follow-up decisions)</li>
+          </ul>
+          <p>Always record damage before end-of-shift handover so replacements can be scheduled correctly.</p>
+        </div>
+      </article>
 
-  <div class="help-booklet-section card p-3">
-    <h5 class="mb-2">5) Orders</h5>
-    <ul class="mb-0">
-      <li>Open <strong>Orders</strong> when the red waiting badge appears.</li>
-      <li>Review pending Shopify orders and import them into Workshop Hub.</li>
-      <li>After import, confirm the job appears in the correct home tab.</li>
-    </ul>
-  </div>
+      <article id="help-page-delivery" class="help-page card border-0 shadow-sm hidden">
+        <div class="help-page-header">
+          <span class="help-page-kicker">Page 5 of 10</span>
+          <h3>Delivery, Bucket & Rooms</h3>
+        </div>
+        <div class="help-page-body">
+          <h6>Bucket tab</h6>
+          <p>Bucket is for packed items not yet assigned to a room. Use it as your staging area before loading or room planning.</p>
+          <h6>Rooms tab</h6>
+          <ul>
+            <li>Create/select room names and move items from bucket into the correct room.</li>
+            <li>Use consistent room naming (e.g. “Room 101”, “Kitchen”, “Reception”).</li>
+            <li>Export room lists when you need install paperwork.</li>
+          </ul>
+          <h6>Status updates</h6>
+          <ul>
+            <li><strong>Delivered</strong> = physically on site.</li>
+            <li><strong>Fitted</strong> = installed and complete.</li>
+          </ul>
+        </div>
+      </article>
 
-  <div class="help-booklet-section card p-3">
-    <h5 class="mb-2">6) Tracking</h5>
-    <ul class="mb-0">
-      <li>Use Tracking to review who changed what, and when.</li>
-      <li>Filter by user, order, or source to investigate specific actions.</li>
-      <li>Sort results by newest/oldest when auditing changes.</li>
-    </ul>
-  </div>
+      <article id="help-page-workshop-stock" class="help-page card border-0 shadow-sm hidden">
+        <div class="help-page-header">
+          <span class="help-page-kicker">Page 6 of 10</span>
+          <h3>Workshop Stock Jobs (Internal Builds)</h3>
+        </div>
+        <div class="help-page-body">
+          <p><strong>Workshop Stock</strong> jobs are internal builds, not direct customer installations. They typically appear in the stock-focused area of the home screen.</p>
+          <h6>How to run stock jobs properly</h6>
+          <ul>
+            <li>Treat them like normal manufacturing jobs for accuracy: cut/process/edge/pack updates still matter.</li>
+            <li>Keep descriptions clear so other staff can identify stock items quickly.</li>
+            <li>When stock is consumed, ensure inventory and assignments reflect where it went.</li>
+          </ul>
+          <h6>Why this matters</h6>
+          <p>Poorly tracked stock builds cause false availability and wasted production time when jobs rely on items that were never truly ready.</p>
+        </div>
+      </article>
 
-  <div class="help-booklet-section card p-3">
-    <h5 class="mb-2">7) Good Workshop Habits</h5>
-    <ul class="mb-0">
-      <li>Update quantities immediately after completing work to keep everyone synced.</li>
-      <li>Record damage with a clear reason so replacement decisions are fast.</li>
-      <li>Before dispatch, verify Bucket/Rooms and delivered quantities match what is physically loaded.</li>
-    </ul>
+      <article id="help-page-cnc" class="help-page card border-0 shadow-sm hidden">
+        <div class="help-page-header">
+          <span class="help-page-kicker">Page 7 of 10</span>
+          <h3>CNC Station & Stock Deductions</h3>
+        </div>
+        <div class="help-page-body">
+          <ul>
+            <li>Use CNC view to log material usage against <strong>Full Sheets</strong> and <strong>Offcuts</strong>.</li>
+            <li>Deduct sheets as the cut is performed, not later.</li>
+            <li>If you switch material mid-run, update selection immediately to keep stock valuation accurate.</li>
+          </ul>
+          <p>Correct CNC deductions keep procurement, planning, and shop-floor decisions reliable.</p>
+        </div>
+      </article>
+
+      <article id="help-page-inventory" class="help-page card border-0 shadow-sm hidden">
+        <div class="help-page-header">
+          <span class="help-page-kicker">Page 8 of 10</span>
+          <h3>Inventory & Replenishment Use</h3>
+        </div>
+        <div class="help-page-body">
+          <h6>Stock Lists sections</h6>
+          <ul>
+            <li><strong>Wood:</strong> Full Sheets, On Order, Offcuts.</li>
+            <li><strong>Components:</strong> fittings, hardware and consumables.</li>
+            <li><strong>Edge:</strong> roll stock and pending supplies.</li>
+            <li><strong>Furniture:</strong> finished stock items.</li>
+          </ul>
+          <p>Use search bars to verify availability before committing a rush cut or replacement.</p>
+          <div class="help-tip"><strong>Tip:</strong> When parts are marked damaged or re-cut is needed, check stock lists immediately to avoid line stoppages.</div>
+        </div>
+      </article>
+
+      <article id="help-page-orders" class="help-page card border-0 shadow-sm hidden">
+        <div class="help-page-header">
+          <span class="help-page-kicker">Page 9 of 10</span>
+          <h3>Orders Import & Tracking Audits</h3>
+        </div>
+        <div class="help-page-body">
+          <h6>Orders</h6>
+          <ol>
+            <li>Open <strong>Orders</strong> when a waiting badge is shown.</li>
+            <li>Review pending Shopify rows and import required jobs.</li>
+            <li>Check imported jobs appear in the expected home tab.</li>
+          </ol>
+          <h6>Tracking</h6>
+          <ul>
+            <li>Filter by user, order ID, and source when investigating changes.</li>
+            <li>Sort newest/oldest depending on whether you are debugging a recent issue or auditing a full timeline.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article id="help-page-qa" class="help-page card border-0 shadow-sm hidden">
+        <div class="help-page-header">
+          <span class="help-page-kicker">Page 10 of 10</span>
+          <h3>End-of-Day Checklist</h3>
+        </div>
+        <div class="help-page-body">
+          <ol>
+            <li>Finish all pending quantity updates (panels/components/delivery).</li>
+            <li>Record all damaged panels with quantity + clear reason.</li>
+            <li>Confirm bucket/room allocations match physical staging.</li>
+            <li>Verify delivered/fitted statuses for site teams.</li>
+            <li>Refresh once and resolve any obvious mismatches before handover.</li>
+          </ol>
+          <p class="mb-0"><strong>Outcome:</strong> The next shift starts with a trustworthy system state and no hidden surprises.</p>
+        </div>
+      </article>
+    </section>
   </div>
 </div>
 

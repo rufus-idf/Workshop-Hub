@@ -448,4 +448,100 @@
 
 
 
+
+
+    /* HELP BOOKLET */
+    .help-booklet-layout {
+      display: grid;
+      grid-template-columns: 290px 1fr;
+      gap: 16px;
+      align-items: start;
+    }
+
+    .help-booklet-contents {
+      position: sticky;
+      top: 86px;
+      padding: 14px;
+      border-radius: 18px;
+    }
+
+    .help-booklet-contents-title {
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+      font-weight: 700;
+      margin-bottom: 10px;
+    }
+
+    .help-nav-btn {
+      width: 100%;
+      text-align: left;
+      border: none;
+      background: #f1f3f5;
+      color: #343a40;
+      border-radius: 12px;
+      padding: 10px 12px;
+      font-weight: 600;
+      margin-bottom: 8px;
+      font-size: 0.9rem;
+    }
+
+    .help-nav-btn.active {
+      background: #1a1a1a;
+      color: #fff;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.15);
+    }
+
+    .help-page {
+      border-radius: 20px;
+      overflow: hidden;
+    }
+
+    .help-page-header {
+      padding: 18px 20px;
+      background: linear-gradient(135deg, #102f57, #0b2340);
+      color: #fff;
+    }
+
+    .help-page-header h3 {
+      margin: 4px 0 0;
+    }
+
+    .help-page-kicker {
+      font-size: 0.74rem;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      opacity: 0.85;
+      font-weight: 700;
+    }
+
+    .help-page-body {
+      padding: 18px 20px;
+    }
+
+    .help-page-body h6 {
+      margin-top: 10px;
+      font-weight: 700;
+    }
+
+    .help-tip {
+      border-left: 4px solid #0b2340;
+      background: #eef4fb;
+      border-radius: 10px;
+      padding: 10px 12px;
+      margin-top: 12px;
+      font-size: 0.92rem;
+    }
+
+    @media (max-width: 992px) {
+      .help-booklet-layout {
+        grid-template-columns: 1fr;
+      }
+
+      .help-booklet-contents {
+        position: static;
+      }
+    }
+
 </style>
