@@ -263,8 +263,8 @@ function getPanelInfoColumnMap_(sheetHeaderMap) {
 function buildPanelHistoryPayload_(colName, delta, userEmail, timestamp) {
   const changeLabels = {
     cut: "Cut",
-    processed: "Processed",
-    edgeFinish: "Edge Finish",
+    processed: "CNC'd",
+    edgeFinish: "Edge Finished",
     packed: "Packed"
   };
 
