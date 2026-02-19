@@ -2192,6 +2192,12 @@ function getTrackingHistory(limit) {
   const maxRows = Math.max(1, Number(limit) || 1500);
   const entries = [];
 
+  const normalizeTrackingOrderId_ = (value) => {
+    const txt = String(value || '').trim();
+    if (!txt) return '';
+    return txt.startsWith('#') ? txt : `#${txt}`;
+  };
+
   const pullByHeaders = (sheetName, mapFn) => {
     const sheet = ss.getSheetByName(sheetName);
     if (!sheet || sheet.getLastRow() < 2) return;
@@ -2222,7 +2228,7 @@ function getTrackingHistory(limit) {
 
     return {
       source: 'Panel History',
-      orderId: String(orderId || '').trim(),
+      orderId: normalizeTrackingOrderId_(orderId),
       user: String(user || '').trim() || 'Unknown',
       timestamp: timestamp,
       item: String(panel || product || 'Panel').trim(),
@@ -2242,18 +2248,26 @@ function getTrackingHistory(limit) {
     if (!timestamp && !user && !material && (changeVal === '' || changeVal === null || changeVal === undefined)) return null;
 
     const sourceLooksLikeOrderId = /^#?[a-z0-9-]+$/i.test(sourceRaw) && /^#?\d+/i.test(sourceRaw);
-    const sourceOrderMatch = sourceRaw.match(/^#?([a-z0-9-]+)$/i);
-    const reasonOrderMatch = String(reason || '').match(/\b(?:order|batch)\s*#?\s*([a-z0-9-]+)/i)
-      || String(reason || '').match(/#\s*([a-z0-9-]+)/i);
-    const materialOrderMatch = String(material || '').match(/#\s*([a-z0-9-]+)/i);
+    const sourceOrderMatch = sourceRaw.match(/^(#?[a-z0-9-]+)$/i);
+    const reasonOrderMatch = String(reason || '').match(/#\s*[a-z0-9-]+/i)
+      || String(reason || '').match(/\b(?:order|batch)\s*#?\s*([a-z0-9-]+)/i);
+    const materialOrderMatch = String(material || '').match(/#\s*[a-z0-9-]+/i);
 
     const normalizedSource = sourceLooksLikeOrderId
       ? (String(material || '').toLowerCase().includes('component') ? 'Component Stock' : 'Stock History')
       : sourceRaw;
 
-    const resolvedOrderId = (reasonOrderMatch && reasonOrderMatch[1])
-      || (materialOrderMatch && materialOrderMatch[1])
-      || (sourceLooksLikeOrderId && sourceOrderMatch ? sourceOrderMatch[1] : '');
+    const reasonOrderId = reasonOrderMatch
+      ? String(reasonOrderMatch[0]).replace(/.*?#/, '#').replace(/\s+/g, '')
+      : '';
+    const materialOrderId = materialOrderMatch
+      ? String(materialOrderMatch[0]).replace(/\s+/g, '')
+      : '';
+    const sourceOrderId = (sourceLooksLikeOrderId && sourceOrderMatch)
+      ? String(sourceOrderMatch[1] || '').replace(/\s+/g, '')
+      : '';
+
+    const resolvedOrderId = reasonOrderId || materialOrderId || sourceOrderId;
 
     const numericChange = Number(changeVal);
     const changeText = Number.isFinite(numericChange)
@@ -2262,7 +2276,7 @@ function getTrackingHistory(limit) {
 
     return {
       source: normalizedSource,
-      orderId: String(resolvedOrderId || '').trim(),
+      orderId: normalizeTrackingOrderId_(resolvedOrderId),
       user: String(user || '').trim() || 'Unknown',
       timestamp: timestamp,
       item: String(material || 'Stock Item').trim(),
@@ -2284,7 +2298,7 @@ function getTrackingHistory(limit) {
 
     return {
       source: String(source || 'Delivery and Fitting').trim(),
-      orderId: String(orderId || '').trim(),
+      orderId: normalizeTrackingOrderId_(orderId),
       user: String(user || '').trim() || 'Unknown',
       timestamp: timestamp,
       item: String(item || 'Product').trim(),

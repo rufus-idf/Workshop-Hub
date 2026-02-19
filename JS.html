@@ -294,6 +294,7 @@ function getDeliveryTotals(orderObj, prodName) {
   prodName = norm(prodName);
   let total = 0;
   let delivered = 0;
+  let fitted = 0;
   const del = (orderObj && orderObj.delivery) ? orderObj.delivery : { bucket: {}, rooms: {} };
 
   if (del.bucket && del.bucket[prodName]) {
@@ -307,12 +308,13 @@ function getDeliveryTotals(orderObj, prodName) {
           const q = Number(item.qty) || 0;
           total += q;
           if (item.status === "Delivered" || item.status === "Fitted") delivered += q;
+          if (item.status === "Fitted") fitted += q;
         }
       });
     }
   }
 
-  return { total, delivered };
+  return { total, delivered, fitted };
 }
 
 function renderDeliveryProductSummary(stats) {
@@ -605,6 +607,7 @@ function updateBreadcrumbsForView(viewId) {
       let orderRequired = 0;
       let orderManufactured = 0;
       let orderDelivered = 0;
+      let orderFitted = 0;
       let lines = '';
 
       // 2. Calculate Totals
@@ -615,10 +618,12 @@ function updateBreadcrumbsForView(viewId) {
         const required = getRequiredUnits(prodData, del.total);
         const manufactured = Math.min(getManufacturedUnits(prodData), required);
         const delivered = Math.min(del.delivered, required);
+        const fitted = Math.min(del.fitted || 0, required);
 
         orderRequired += required;
         orderManufactured += manufactured;
         orderDelivered += delivered;
+        orderFitted += fitted;
 
         // Custom text based on type
         const lineText = isWorkshop
@@ -646,7 +651,7 @@ function updateBreadcrumbsForView(viewId) {
       let isComplete = false;
       if (orderRequired > 0) {
           if (isWorkshop) isComplete = (orderManufactured >= orderRequired);
-          else isComplete = (orderDelivered >= orderRequired);
+          else isComplete = (orderFitted >= orderRequired);
       }
 
       // --- 4. THE FILTERING LOGIC (Your Request) ---
