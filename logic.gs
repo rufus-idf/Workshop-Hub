@@ -1482,6 +1482,33 @@ if (normTxt(row[4]) !== "") continue; // already assigned
 }
 
 
+function getDeliveryHistorySheet_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName("Delivery History");
+  if (!sheet) sheet = ss.insertSheet("Delivery History");
+
+  if (sheet.getLastRow() === 0) {
+    sheet.appendRow(["Timestamp", "User", "Source", "Order ID", "Item", "Change", "Reason"]);
+  }
+
+  return sheet;
+}
+
+function logDeliveryFittingHistory_(orderId, productName, newStatus, qty, roomName, userEmail, timestamp) {
+  if (newStatus !== "Delivered" && newStatus !== "Fitted") return;
+
+  const sheet = getDeliveryHistorySheet_();
+  const safeQty = Math.max(1, Number(qty) || 1);
+  const safeOrder = String(orderId || "").trim();
+  const safeItem = String(productName || "").trim() || "Unknown Product";
+  const safeUser = String(userEmail || "").trim() || "Workshop App";
+  const safeRoom = String(roomName || "").trim();
+  const ts = timestamp instanceof Date ? timestamp : new Date();
+
+  const reason = safeRoom ? `Room: ${safeRoom}` : "";
+  sheet.appendRow([ts, safeUser, "Delivery and Fitting", safeOrder, safeItem, `${newStatus} (+${safeQty})`, reason]);
+}
+
 // 8. DELIVERY: UPDATE STATUS (DIAGNOSTIC VERSION)
 function updateDeliveryStatus(orderId, roomName, productName, oldStatus, newStatus, qtyToUpdate) {
   roomName = canonicalRoomName_(roomName);
@@ -1558,6 +1585,8 @@ if (normTxt(row[0]) === normTxt(orderId) && normTxt(row[3]) === normTxt(productN
   }
 
   if (updated === 0) return "Error: No matching items found to update.";
+
+  logDeliveryFittingHistory_(orderId, productName, newStatus, updated, roomName, user, ts);
   return "SUCCESS";
 
     } finally {
@@ -2238,6 +2267,28 @@ function getTrackingHistory(limit) {
       timestamp: timestamp,
       item: String(material || 'Stock Item').trim(),
       change: changeText,
+      reason: String(reason || '').trim()
+    };
+  });
+
+  pullByHeaders('Delivery History', (row, map) => {
+    const timestamp = row[map['timestamp']] || '';
+    const user = row[map['user']] || '';
+    const source = row[map['source']] || 'Delivery and Fitting';
+    const orderId = row[map['order id']] || '';
+    const item = row[map['item']] || row[map['product']] || '';
+    const change = row[map['change']] || '';
+    const reason = row[map['reason']] || '';
+
+    if (!timestamp && !user && !orderId && !item && !change) return null;
+
+    return {
+      source: String(source || 'Delivery and Fitting').trim(),
+      orderId: String(orderId || '').trim(),
+      user: String(user || '').trim() || 'Unknown',
+      timestamp: timestamp,
+      item: String(item || 'Product').trim(),
+      change: String(change || 'Updated').trim(),
       reason: String(reason || '').trim()
     };
   });
