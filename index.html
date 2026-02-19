@@ -101,6 +101,7 @@
           <span class="visually-hidden">New alerts</span>
         </span>
       </button>
+      <button class="btn btn-outline-dark header-action-btn" onclick="openTrackingView()">📋 Tracking</button>
     </div>
 
     <div id="orders-pending-banner" class="alert alert-danger py-2 px-3 mb-3 hidden" role="status" aria-live="polite">
@@ -349,6 +350,71 @@
     </div>
   </div>
 
+</div>
+
+<div id="view-tracking" class="hidden">
+  <div class="d-flex align-items-center sticky-top-bar">
+    <button class="btn btn-light rounded-circle shadow-sm me-3" style="width:45px; height:45px;" onclick="showView('view-jobs')">🡐</button>
+    <div>
+      <h6 class="text-muted small mb-0">ADMIN</h6>
+      <h4 class="mb-0">Tracking</h4>
+    </div>
+  </div>
+
+  <div class="card border-0 shadow-sm mb-3">
+    <div class="card-body">
+      <div class="row g-2">
+        <div class="col-12 col-md-4">
+          <label class="small text-muted mb-1">User</label>
+          <input id="tracking-filter-user" type="text" class="form-control" placeholder="Filter by user" oninput="applyTrackingFilters()">
+        </div>
+        <div class="col-12 col-md-4">
+          <label class="small text-muted mb-1">Order ID</label>
+          <input id="tracking-filter-order" type="text" class="form-control" placeholder="Filter by order ID" oninput="applyTrackingFilters()">
+        </div>
+        <div class="col-12 col-md-4">
+          <label class="small text-muted mb-1">Source</label>
+          <select id="tracking-filter-source" class="form-select" onchange="applyTrackingFilters()">
+            <option value="">All Sources</option>
+          </select>
+        </div>
+        <div class="col-6 col-md-2">
+          <label class="small text-muted mb-1">Sort By</label>
+          <select id="tracking-sort-field" class="form-select" onchange="applyTrackingFilters()">
+            <option value="date">Date</option>
+            <option value="user">User</option>
+            <option value="orderId">Order ID</option>
+          </select>
+        </div>
+        <div class="col-6 col-md-2">
+          <label class="small text-muted mb-1">Direction</label>
+          <select id="tracking-sort-dir" class="form-select" onchange="applyTrackingFilters()">
+            <option value="desc">Newest First</option>
+            <option value="asc">Oldest First</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="table-responsive bg-white rounded shadow-sm border">
+    <table class="table table-sm table-hover align-middle mb-0">
+      <thead class="bg-light">
+        <tr class="text-secondary small text-uppercase">
+          <th class="ps-3">Date</th>
+          <th>User</th>
+          <th>Order ID</th>
+          <th>Source</th>
+          <th>Item</th>
+          <th>Change</th>
+          <th class="pe-3">Reason</th>
+        </tr>
+      </thead>
+      <tbody id="tracking-table-body">
+        <tr><td colspan="7" class="text-center text-muted py-4">Loading...</td></tr>
+      </tbody>
+    </table>
+  </div>
 </div>
 
   <?!= include('JS'); ?>
