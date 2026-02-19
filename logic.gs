@@ -621,8 +621,8 @@ function processComponentBatch(updates) {
         if (nameKey && stockMap[nameKey]) stockMap[nameKey].qty = newStockQty;
 
         const productSku = productSkuMap[`${orderId}||${productName}`.toLowerCase()] || "";
-        const reason = `Allocated to ${productSku || productName || "Product"}`;
-        logStockTransaction(compName || "Component", -delta, reason, orderId || "Project");
+        const reason = `Allocated to ${productSku || productName || "Product"}${orderId ? ` (Order ${orderId})` : ""}`;
+        logStockTransaction(compName || "Component", -delta, reason, "Component Stock");
       }
 
       sheet.getRange(rowIndex, 8).setValue(next);     // Packed
@@ -2205,15 +2205,26 @@ function getTrackingHistory(limit) {
   pullByHeaders('Stock History', (row, map) => {
     const timestamp = row[map['timestamp']] || '';
     const user = row[map['user']] || '';
-    const source = row[map['source']] || 'Stock History';
+    const sourceRaw = String(row[map['source']] || 'Stock History').trim();
     const material = row[map['material']] || '';
     const changeVal = row[map['change']];
     const reason = row[map['reason']] || '';
 
     if (!timestamp && !user && !material && (changeVal === '' || changeVal === null || changeVal === undefined)) return null;
 
-    const orderMatch = String(reason || '').match(/\b(?:order|batch)\s*#?\s*([a-z0-9-]+)/i)
-      || String(material || '').match(/#\s*([a-z0-9-]+)/i);
+    const sourceLooksLikeOrderId = /^#?[a-z0-9-]+$/i.test(sourceRaw) && /^#?\d+/i.test(sourceRaw);
+    const sourceOrderMatch = sourceRaw.match(/^#?([a-z0-9-]+)$/i);
+    const reasonOrderMatch = String(reason || '').match(/\b(?:order|batch)\s*#?\s*([a-z0-9-]+)/i)
+      || String(reason || '').match(/#\s*([a-z0-9-]+)/i);
+    const materialOrderMatch = String(material || '').match(/#\s*([a-z0-9-]+)/i);
+
+    const normalizedSource = sourceLooksLikeOrderId
+      ? (String(material || '').toLowerCase().includes('component') ? 'Component Stock' : 'Stock History')
+      : sourceRaw;
+
+    const resolvedOrderId = (reasonOrderMatch && reasonOrderMatch[1])
+      || (materialOrderMatch && materialOrderMatch[1])
+      || (sourceLooksLikeOrderId && sourceOrderMatch ? sourceOrderMatch[1] : '');
 
     const numericChange = Number(changeVal);
     const changeText = Number.isFinite(numericChange)
@@ -2221,8 +2232,8 @@ function getTrackingHistory(limit) {
       : String(changeVal || 'Updated');
 
     return {
-      source: String(source || 'Stock History').trim(),
-      orderId: orderMatch ? String(orderMatch[1] || '').trim() : '',
+      source: normalizedSource,
+      orderId: String(resolvedOrderId || '').trim(),
       user: String(user || '').trim() || 'Unknown',
       timestamp: timestamp,
       item: String(material || 'Stock Item').trim(),
