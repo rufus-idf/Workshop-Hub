@@ -814,6 +814,7 @@ function applyTrackingFilters() {
   const userFilter = String(document.getElementById('tracking-filter-user')?.value || '').trim().toLowerCase();
   const orderFilter = String(document.getElementById('tracking-filter-order')?.value || '').trim().toLowerCase();
   const sourceFilter = String(document.getElementById('tracking-filter-source')?.value || '').trim().toLowerCase();
+  const dateFilter = String(document.getElementById('tracking-filter-date')?.value || '').trim();
   const sortField = document.getElementById('tracking-sort-field')?.value || 'date';
   const sortDir = document.getElementById('tracking-sort-dir')?.value || 'desc';
 
@@ -821,10 +822,12 @@ function applyTrackingFilters() {
     const userTxt = String(r.user || '').toLowerCase();
     const orderTxt = String(r.orderId || '').toLowerCase();
     const sourceTxt = String(r.source || '').toLowerCase();
+    const dateTxt = String(r.dateKey || '');
 
     if (userFilter && !userTxt.includes(userFilter)) return false;
     if (orderFilter && !orderTxt.includes(orderFilter)) return false;
     if (sourceFilter && sourceTxt !== sourceFilter) return false;
+    if (dateFilter && dateTxt !== dateFilter) return false;
     return true;
   });
 

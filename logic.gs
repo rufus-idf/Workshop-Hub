@@ -1927,11 +1927,20 @@ function allocateWood(rowIndex, qtyUsed, projectId, productName, offcutData) {
 
   // 2. LOG HISTORY (The "Book" Icon - Transactional)
   const materialName = stockSheet.getRange(rowIndex, 1).getValue(); // Col A
+  const stockType = String(stockSheet.getRange(rowIndex, 2).getValue() || '').trim().toLowerCase(); // Col B = Type
+  const offcutLength = Number(stockSheet.getRange(rowIndex, 3).getValue()) || 0; // Col C = Length
+  const offcutWidth = Number(stockSheet.getRange(rowIndex, 4).getValue()) || 0; // Col D = Width
+  const isOffcutAllocation = stockType === 'offcut' && offcutLength > 0 && offcutWidth > 0;
+
+  const historyMaterialName = isOffcutAllocation
+    ? `Offcut: ${materialName} - ${offcutLength} x ${offcutWidth}`
+    : materialName;
+
   let historyReason = `CNC Job: #${projectId} (${productName})`;
   if(offcutData) historyReason += " [Offcut Generated]";
   
   // This goes to 'Stock History' tab
-  logStockTransaction(materialName, -qtyUsed, historyReason);
+  logStockTransaction(historyMaterialName, -qtyUsed, historyReason);
 
   // 3. UPDATE PROJECT SUMMARY (The "Wood Usage Log" Tab)
   // This aggregates the totals nicely
@@ -2198,6 +2207,18 @@ function getTrackingHistory(limit) {
     return txt.startsWith('#') ? txt : `#${txt}`;
   };
 
+  const formatTrackingItemLabel_ = (materialValue) => {
+    const raw = String(materialValue || '').trim();
+    if (!raw) return 'Stock Item';
+
+    const offcutMatch = raw.match(/^offcut\s*:\s*(.+?)\s*-\s*(\d+)\s*x\s*(\d+)$/i);
+    if (offcutMatch) {
+      return `Offcut: ${offcutMatch[1].trim()} - ${offcutMatch[2]} x ${offcutMatch[3]}`;
+    }
+
+    return raw;
+  };
+
   const pullByHeaders = (sheetName, mapFn) => {
     const sheet = ss.getSheetByName(sheetName);
     if (!sheet || sheet.getLastRow() < 2) return;
@@ -2279,7 +2300,7 @@ function getTrackingHistory(limit) {
       orderId: normalizeTrackingOrderId_(resolvedOrderId),
       user: String(user || '').trim() || 'Unknown',
       timestamp: timestamp,
-      item: String(material || 'Stock Item').trim(),
+      item: formatTrackingItemLabel_(material),
       change: changeText,
       reason: String(reason || '').trim()
     };
@@ -2331,11 +2352,14 @@ function getTrackingHistory(limit) {
       }
     }
 
+    const dateKey = timeMs ? Utilities.formatDate(new Date(timeMs), Session.getScriptTimeZone(), 'yyyy-MM-dd') : '';
+
     return {
       source: e.source,
       orderId: e.orderId,
       user: e.user,
       dateStr: dateStr,
+      dateKey: dateKey,
       timeMs: timeMs,
       item: e.item,
       change: e.change,
