@@ -193,6 +193,46 @@ const fmtNum = (v, digits = 0) => {
 const fmtMaybe = (v, digits = 0) => (v == null ? "-" : fmtNum(v, digits));
 const jsStr = (s) => JSON.stringify(String(s ?? ""));
 
+function getOrderDisplayIds(orderObj, fallbackId = "") {
+  const ids = Array.isArray(orderObj?.displayOrderIds) && orderObj.displayOrderIds.length
+    ? orderObj.displayOrderIds
+    : [orderObj?.id || fallbackId].filter(Boolean);
+  return Array.from(new Set(ids.map(id => norm(id)).filter(Boolean)));
+}
+
+function getOrderDisplayIdText(orderObj, fallbackId = "") {
+  return getOrderDisplayIds(orderObj, fallbackId).join(" & ");
+}
+
+function getOrderDisplayTitle(orderObj, fallbackId = "") {
+  const customer = norm(orderObj?.customer);
+  const ids = getOrderDisplayIdText(orderObj, fallbackId);
+  if (!customer) return ids ? `Order ${ids}` : "Project";
+  if (!ids || customer.toLowerCase() === 'workshop stock') return customer;
+  return `${customer}, Order ${ids}`;
+}
+
+function getCurrentOrderIds() {
+  return getOrderDisplayIds(rawData?.[currentOrder], currentOrder);
+}
+
+function getProductSourceOrderIds(orderObj, prodName) {
+  const ids = orderObj?.products?.[prodName]?.sourceOrderIds;
+  return Array.isArray(ids) && ids.length ? ids.map(id => norm(id)).filter(Boolean) : getCurrentOrderIds();
+}
+
+function getBucketSourceOrderIds(orderObj, prodName) {
+  const ids = orderObj?.delivery?.bucket?.[prodName]?.sourceOrderIds;
+  return Array.isArray(ids) && ids.length ? ids.map(id => norm(id)).filter(Boolean) : getProductSourceOrderIds(orderObj, prodName);
+}
+
+function getRoomItemSourceOrderIds(orderObj, roomName, prodName, status) {
+  const items = orderObj?.delivery?.rooms?.[roomName] || [];
+  const match = items.find(item => norm(item.name) === norm(prodName) && norm(item.status) === norm(status));
+  const ids = match?.sourceOrderIds;
+  return Array.isArray(ids) && ids.length ? ids.map(id => norm(id)).filter(Boolean) : getProductSourceOrderIds(orderObj, prodName);
+}
+
 function getPanelDamageInfo(panelData, prodData) {
   const per = Number(panelData?.qtyPerUnit) || 1;
   const qtyOrder = Number(panelData?.qtyOrder) || 0;
@@ -485,9 +525,10 @@ function updateBreadcrumbsForView(viewId) {
   }
 
   // Project crumb (only if we have a current order)
-  const customer = (currentOrder && rawData[currentOrder]) ? norm(rawData[currentOrder].customer) : "Project";
+  const orderObj = (currentOrder && rawData[currentOrder]) ? rawData[currentOrder] : null;
+  const customer = orderObj ? getOrderDisplayTitle(orderObj, currentOrder) : "Project";
   const projectCrumb = {
-    label: currentOrder ? `${customer} (${currentOrder})` : "Project",
+    label: currentOrder ? customer : "Project",
     onClick: () => {
       if (currentOrder) showView("view-dashboard");
       else showView("view-jobs");
@@ -721,8 +762,8 @@ function updateBreadcrumbsForView(viewId) {
           card.innerHTML = `
             <div class="d-flex justify-content-between mb-2">
               <div>
-                <h5 class="mb-0">${details.customer}</h5>
-                <small class="text-muted">#${id}</small>
+                <h5 class="mb-0">${escHtml(getOrderDisplayTitle(details, id))}</h5>
+                <small class="text-muted">${details.isMerged ? 'Combined manufacturing view' : `Order ${escHtml(getOrderDisplayIdText(details, id))}`}</small>
               </div>
               <span class="badge bg-light text-dark rounded-pill">
                 ${orderDelivered}/${orderRequired} Delivered
@@ -1109,7 +1150,7 @@ function renderWoodStockManager() {
 
   function openOrder(id) {
     currentOrder = id;
-    document.getElementById('dash-customer').innerText = rawData[id].customer;
+    document.getElementById('dash-customer').innerText = getOrderDisplayTitle(rawData[id], id);
     
     // SHOW Delivery button for Clients
     const delivBtn = document.getElementById('btn-dash-deliv');
@@ -1120,7 +1161,7 @@ function renderWoodStockManager() {
 
   function openStockDashboard(id) {
     currentOrder = id;
-    document.getElementById('dash-customer').innerText = rawData[id].customer;
+    document.getElementById('dash-customer').innerText = getOrderDisplayTitle(rawData[id], id);
 
     // HIDE Delivery button for Stock
     const delivBtn = document.getElementById('btn-dash-deliv');
@@ -1131,7 +1172,7 @@ function renderWoodStockManager() {
 
   // --- 2. MANUFACTURING FLOW ---
   function openManufacturing() {
-  document.getElementById('manuf-customer').innerText = rawData[currentOrder].customer;
+  document.getElementById('manuf-customer').innerText = getOrderDisplayTitle(rawData[currentOrder], currentOrder);
   const list = document.getElementById('product-list');
   list.innerHTML = '';
 
@@ -1177,7 +1218,7 @@ function renderWoodStockManager() {
   <button type="button"
           class="btn btn-outline-secondary btn-sm rounded-circle shadow-sm"
           style="width:40px; height:40px;"
-          onclick="triggerExport(event, '${currentOrder}', '${prodName}')">
+          onclick="triggerExport(event, '${prodName}')">
     📄
   </button>
 </div>
@@ -1200,7 +1241,7 @@ function renderWoodStockManager() {
 
   // --- 3. DELIVERY FLOW ---
   function openDelivery() {
-  document.getElementById('deliv-customer').innerText = rawData[currentOrder].customer;
+  document.getElementById('deliv-customer').innerText = getOrderDisplayTitle(rawData[currentOrder], currentOrder);
   showView('view-delivery');
   renderDeliverySummary();
   switchDelivTab('bucket');
@@ -1416,7 +1457,7 @@ function exportRoomListToGoogleSheets() {
       const message = err && err.message ? err.message : 'Export failed.';
       alert(`Export failed: ${message}`);
     })
-    .exportRoomListToSheets(currentOrder);
+    .exportRoomListToSheets(getCurrentOrderIds());
 }
 
 
@@ -1482,6 +1523,7 @@ if (s && newCountsOnSite && !oldCountsOnSite) {
   // Return to Bucket (partial supported)
   if (newStatus === "Bucket") {
     showStatus("Returning...", false);
+    const sourceOrderIds = getRoomItemSourceOrderIds(rawData[currentOrder], roomName, prodName, oldStatus);
 
     // Update local model
     roomArr[idx].qty -= qtyToMove;
@@ -1489,15 +1531,16 @@ if (s && newCountsOnSite && !oldCountsOnSite) {
     if (roomArr.length === 0) delete rawData[currentOrder].delivery.rooms[roomName];
 
     const bucket = rawData[currentOrder].delivery.bucket;
-    if (!bucket[prodName]) bucket[prodName] = { qty: 0 };
+    if (!bucket[prodName]) bucket[prodName] = { qty: 0, sourceOrderIds: [] };
     bucket[prodName].qty += qtyToMove;
+    bucket[prodName].sourceOrderIds = Array.from(new Set([...(bucket[prodName].sourceOrderIds || []), ...sourceOrderIds]));
 
     renderRooms();
     renderDeliverySummary();
     renderBucket();
     showStatus("Returned!", true);
 
-    google.script.run.unassignFromRoom(currentOrder, roomName, prodName, qtyToMove);
+    google.script.run.unassignFromRoom(sourceOrderIds, roomName, prodName, qtyToMove);
     return;
   }
 
@@ -1508,6 +1551,7 @@ if (s && newCountsOnSite && !oldCountsOnSite) {
   google.script.run
     .withSuccessHandler(res => {
       if (res === "SUCCESS") {
+        const sourceOrderIds = getRoomItemSourceOrderIds(rawData[currentOrder], roomName, prodName, oldStatus);
 
         // Remove qty from the old group
         const curQty = Number(roomArr[idx].qty) || 0;
@@ -1520,8 +1564,12 @@ if (s && newCountsOnSite && !oldCountsOnSite) {
         const safeNewStatus = norm(newStatus);
 
          let existing = roomArr.find(i => norm(i.name) === prodName && norm(i.status) === safeNewStatus);
-         if (existing) existing.qty += qtyToMove;
-         else roomArr.push({ name: prodName, qty: qtyToMove, status: safeNewStatus });
+         if (existing) {
+           existing.qty += qtyToMove;
+           existing.sourceOrderIds = Array.from(new Set([...(existing.sourceOrderIds || []), ...sourceOrderIds]));
+         } else {
+           roomArr.push({ name: prodName, qty: qtyToMove, status: safeNewStatus, sourceOrderIds: sourceOrderIds });
+         }
         
         if (roomArr.length === 0) delete rawData[currentOrder].delivery.rooms[roomName];
 
@@ -1552,7 +1600,7 @@ alert(
       alert("Connection Error: " + err.message);
       selectEl.value = oldStatus;
     })
-    .updateDeliveryStatus(currentOrder, roomName, prodName, oldStatus, newStatus, qtyToMove);
+    .updateDeliveryStatus(getRoomItemSourceOrderIds(rawData[currentOrder], roomName, prodName, oldStatus), roomName, prodName, oldStatus, newStatus, qtyToMove);
 }
 
 
@@ -1671,7 +1719,8 @@ alert(
 
           if (!failedRes) {
             const bucket = rawData[currentOrder].delivery.bucket || {};
-            if (!bucket[safeProd]) bucket[safeProd] = { qty: 0 };
+            const sourceOrderIds = getBucketSourceOrderIds(rawData[currentOrder], safeProd);
+            if (!bucket[safeProd]) bucket[safeProd] = { qty: 0, sourceOrderIds: sourceOrderIds };
             bucket[safeProd].qty -= m.qty;
             if (bucket[safeProd].qty <= 0) delete bucket[safeProd];
             rawData[currentOrder].delivery.bucket = bucket;
@@ -1681,8 +1730,12 @@ alert(
 
             const roomItems = rawData[currentOrder].delivery.rooms[roomName];
             const existing = roomItems.find(i => norm(i.name) === safeProd && norm(i.status) === 'Pending');
-            if (existing) existing.qty = (Number(existing.qty) || 0) + m.qty;
-            else roomItems.push({ name: safeProd, qty: m.qty, status: 'Pending' });
+            if (existing) {
+              existing.qty = (Number(existing.qty) || 0) + m.qty;
+              existing.sourceOrderIds = Array.from(new Set([...(existing.sourceOrderIds || []), ...sourceOrderIds]));
+            } else {
+              roomItems.push({ name: safeProd, qty: m.qty, status: 'Pending', sourceOrderIds: sourceOrderIds });
+            }
           }
 
           pending--;
@@ -1713,7 +1766,7 @@ alert(
             alert('Some assignments failed to save. Data has been refreshed from server.');
           }
         })
-        .assignToRoom(currentOrder, safeProd, m.qty, roomName);
+        .assignToRoom(getBucketSourceOrderIds(rawData[currentOrder], safeProd), safeProd, m.qty, roomName);
     });
   }
 
@@ -2220,10 +2273,12 @@ saveTimer = setTimeout(sendQueueToServer, 500);
 
 
   // --- NEW: TRIGGER XML EXPORT ---
-  function triggerExport(evt, orderId, prodName) {
+  function triggerExport(evt, prodName) {
   if (evt) evt.stopPropagation();
 
     if(!confirm(`Generate CNC XML file for ${prodName}?`)) return;
+    const orderObj = rawData[currentOrder];
+    const sourceOrderIds = getProductSourceOrderIds(orderObj, prodName);
     
     showStatus("Generating XML...", false);
     
@@ -2236,7 +2291,7 @@ saveTimer = setTimeout(sendQueueToServer, 500);
          alert("Error: " + err.message);
          showStatus("Error", false);
       })
-      .exportCncXml(orderId, prodName);
+      .exportCncXml(sourceOrderIds, prodName);
   }
   
   function toggleComponent(rowIdx, rowEl) {
@@ -2329,7 +2384,7 @@ function openCNCNester() {
   }
 
   if (label) {
-    label.innerText = `${rawData[currentOrder].customer} (#${currentOrder})`;
+    label.innerText = getOrderDisplayTitle(rawData[currentOrder], currentOrder);
   }
 
   filterStockByJob();
@@ -2567,7 +2622,7 @@ updateBreadcrumbsForView("view-cnc");
           if (orderLabel) orderLabel.innerText = 'No order selected';
           wrap.classList.add('hidden');
       } else {
-          if (orderLabel) orderLabel.innerText = `${rawData[currentOrder].customer} (#${currentOrder})`;
+          if (orderLabel) orderLabel.innerText = getOrderDisplayTitle(rawData[currentOrder], currentOrder);
 
           const products = rawData[currentOrder].products || {};
           for (const prodName in products) {
@@ -3531,47 +3586,103 @@ function allocateShopifyLine(shopifyRowIndex, inStock, remainingToAllocate, sugg
     .allocateFinishedGoodsToOrder(shopifyRowIndex, qty);
 }
 
+function chooseShopifyMergeTarget(context) {
+  const safe = context || {};
+  const customer = norm(safe.customer) || 'This customer';
+  const existingTargetId = norm(safe.existingMergeTargetId);
+  const candidates = Array.isArray(safe.candidates) ? safe.candidates : [];
+
+  if (existingTargetId) return existingTargetId;
+  if (!candidates.length) return "";
+
+  const options = ['0. Keep as a separate order'];
+  candidates.forEach((candidate, idx) => {
+    const label = Array.isArray(candidate.displayOrderIds) && candidate.displayOrderIds.length
+      ? candidate.displayOrderIds.join(' & ')
+      : candidate.targetOrderId;
+    options.push(`${idx + 1}. Merge with existing order #${label}`);
+  });
+
+  const promptText = [
+    `${customer} already has an active manufacturing order.`,
+    '',
+    ...options,
+    '',
+    'Enter the number of your choice:'
+  ].join('\n');
+
+  const entered = prompt(promptText, candidates.length === 1 ? '1' : '0');
+  if (entered === null) return null;
+
+  const choice = parseInt(entered, 10);
+  if (Number.isNaN(choice) || choice < 0 || choice > candidates.length) {
+    alert('Invalid choice. Import cancelled.');
+    return null;
+  }
+
+  return choice === 0 ? '' : norm(candidates[choice - 1].targetOrderId);
+}
+
 function approveShopifyLine(shopifyRowIndex, btnElement) {
   if (!confirm("Approve & import this line into Manufacturing/Delivery now?")) return;
 
-  // 1. DISABLE BUTTON IMMEDIATELY (Prevent Double Click)
   if (btnElement) {
     btnElement.disabled = true;
     btnElement.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Importing...';
   }
 
   shopifyBusyRows.add(shopifyRowIndex);
-  showStatus("Importing...", false);
+  showStatus("Checking merge options...", false);
+
+  const resetButton = (label = "Import (Build)") => {
+    if (!btnElement) return;
+    btnElement.disabled = false;
+    btnElement.innerText = label;
+  };
 
   google.script.run
-    .withSuccessHandler(res => {
-      shopifyBusyRows.delete(shopifyRowIndex);
-
-      if (String(res) !== "SUCCESS" && String(res) !== "Already imported") {
-        alert("Import result: " + res);
-        // Re-enable if it failed logically (so they can try again or fix it)
-        if (btnElement) {
-            btnElement.disabled = false;
-            btnElement.innerText = "Retry Import";
-        }
-      } else {
-        showStatus("Imported!", true);
-        // Refresh the list to remove the row
-        refreshShopifyOrdersModal();
-        reloadAllData();
+    .withSuccessHandler(context => {
+      const mergeTargetOrderId = chooseShopifyMergeTarget(context);
+      if (mergeTargetOrderId === null) {
+        shopifyBusyRows.delete(shopifyRowIndex);
+        showStatus("Cancelled", true);
+        resetButton();
+        return;
       }
+
+      showStatus("Importing...", false);
+      google.script.run
+        .withSuccessHandler(res => {
+          shopifyBusyRows.delete(shopifyRowIndex);
+
+          if (!String(res).startsWith("SUCCESS") && String(res) !== "Already imported") {
+            alert("Import result: " + res);
+            resetButton('Retry Import');
+            return;
+          }
+
+          const importedMsg = String(res).startsWith('SUCCESS|MERGED|')
+            ? `Imported and merged into Order #${String(res).split('|')[2]}.`
+            : 'Imported!';
+          showStatus(importedMsg, true);
+          refreshShopifyOrdersModal();
+          reloadAllData();
+        })
+        .withFailureHandler(err => {
+          shopifyBusyRows.delete(shopifyRowIndex);
+          alert("Approve/Import failed: " + err.message);
+          showStatus("Error", true);
+          resetButton('Import (Retry)');
+        })
+        .approveAndImportShopifyRow(shopifyRowIndex, mergeTargetOrderId || "");
     })
     .withFailureHandler(err => {
       shopifyBusyRows.delete(shopifyRowIndex);
-      alert("Approve/Import failed: " + err.message);
+      alert("Could not check merge options: " + err.message);
       showStatus("Error", true);
-      // Re-enable on crash
-      if (btnElement) {
-        btnElement.disabled = false;
-        btnElement.innerText = "Import (Retry)";
-      }
+      resetButton('Import (Retry)');
     })
-    .approveAndImportShopifyRow(shopifyRowIndex);
+    .getShopifyMergeOptions(shopifyRowIndex);
 }
 
 
@@ -3579,7 +3690,16 @@ function approveShopifyLine(shopifyRowIndex, btnElement) {
 
   function mergeWorkshopStockOrders() {
   const wsKey = "WORKSHOP";
-  const ws = { id: wsKey, customer: "Workshop Stock", products: {}, delivery: { bucket: {}, rooms: {} } };
+  const ws = {
+    id: wsKey,
+    customer: "Workshop Stock",
+    products: {},
+    delivery: { bucket: {}, rooms: {} },
+    memberOrderIds: [],
+    displayOrderIds: [wsKey],
+    mergeTargetOrderId: wsKey,
+    isMerged: false
+  };
 
   const keys = Object.keys(rawData || {});
   const toRemove = [];
@@ -3590,22 +3710,24 @@ function approveShopifyLine(shopifyRowIndex, btnElement) {
 
     if (norm(o.customer).toLowerCase() === "workshop stock") {
       toRemove.push(orderId);
+      ws.memberOrderIds = Array.from(new Set([...(ws.memberOrderIds || []), ...(o.memberOrderIds || [orderId])].map(id => norm(id)).filter(Boolean)));
 
-      // Merge products
       for (const prodKey in (o.products || {})) {
-        if (!ws.products[prodKey]) ws.products[prodKey] = { panels: [], components: [] };
+        if (!ws.products[prodKey]) ws.products[prodKey] = { panels: [], components: [], sourceOrderIds: [] };
 
         const src = o.products[prodKey];
         if (src.panels && src.panels.length) ws.products[prodKey].panels.push(...src.panels);
         if (src.components && src.components.length) ws.products[prodKey].components.push(...src.components);
+        ws.products[prodKey].sourceOrderIds = Array.from(new Set([
+          ...(ws.products[prodKey].sourceOrderIds || []),
+          ...((src && src.sourceOrderIds) || [orderId])
+        ].map(id => norm(id)).filter(Boolean)));
       }
     }
   });
 
-  // Remove individual workshop orders
   toRemove.forEach(k => delete rawData[k]);
 
-  // Add single virtual workshop order if any existed
   if (Object.keys(ws.products).length) rawData[wsKey] = ws;
 }
 
@@ -4410,8 +4532,8 @@ function switchCncWoodSubTab(tab) {
                          currentProduct = prodName;
                          
                          // 2. Set UI Text
-                         document.getElementById('dash-customer').innerText = rawData[ordId].customer;
-                         document.getElementById('manuf-customer').innerText = rawData[ordId].customer;
+                         document.getElementById('dash-customer').innerText = getOrderDisplayTitle(rawData[ordId], ordId);
+                         document.getElementById('manuf-customer').innerText = getOrderDisplayTitle(rawData[ordId], ordId);
                          document.getElementById('fork-product-name').innerText = prodName;
                          document.getElementById('panel-prod-name').innerText = prodName;
 
