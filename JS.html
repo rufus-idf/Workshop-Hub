@@ -203,12 +203,85 @@ function formatOffcutArea(value) {
   return `${fmtNum(num, 3)} m²`;
 }
 
-function buildOffcutTable(rows) {
-  if (!rows || !rows.length) {
-    return `<div class="text-center text-muted py-4">No offcuts found.</div>`;
+const offcutViewState = {
+  stock: { shapeType: 'ALL', sortBy: 'area_desc' },
+  cnc: { shapeType: 'ALL', sortBy: 'area_desc' }
+};
+
+function getOffcutViewState(viewKey) {
+  if (!offcutViewState[viewKey]) {
+    offcutViewState[viewKey] = { shapeType: 'ALL', sortBy: 'area_desc' };
+  }
+  return offcutViewState[viewKey];
+}
+
+function rerenderOffcutView(viewKey) {
+  if (viewKey === 'stock') {
+    renderWoodStockManager();
+    return;
   }
 
+  renderWoodStock(cncWoodViewData, 'cnc');
+}
+
+function setOffcutShapeFilter(viewKey, value) {
+  getOffcutViewState(viewKey).shapeType = value || 'ALL';
+  rerenderOffcutView(viewKey);
+}
+
+function setOffcutSort(viewKey, value) {
+  getOffcutViewState(viewKey).sortBy = value || 'area_desc';
+  rerenderOffcutView(viewKey);
+}
+
+function buildOffcutTable(rows, viewKey) {
+  const safeRows = Array.isArray(rows) ? rows.slice() : [];
+  const state = getOffcutViewState(viewKey);
+  const shapeTypes = Array.from(new Set(
+    safeRows
+      .map(item => String(item.shapeType || '').trim().toUpperCase())
+      .filter(Boolean)
+  )).sort((a, b) => a.localeCompare(b));
+
+  const filteredRows = safeRows.filter(item => {
+    const shapeType = String(item.shapeType || '').trim().toUpperCase();
+    return state.shapeType === 'ALL' || shapeType === state.shapeType;
+  });
+
+  filteredRows.sort((a, b) => {
+    const areaA = Number(a.areaM2) || 0;
+    const areaB = Number(b.areaM2) || 0;
+    if (state.sortBy === 'area_asc') {
+      if (areaA !== areaB) return areaA - areaB;
+    } else {
+      if (areaA !== areaB) return areaB - areaA;
+    }
+
+    return String(a.externalOffcutId || a.offcutId || '')
+      .localeCompare(String(b.externalOffcutId || b.offcutId || ''));
+  });
+
   let html = `
+    <div class="card border-0 shadow-sm mb-3">
+      <div class="card-body">
+        <div class="row g-2 align-items-end">
+          <div class="col-12 col-md-6">
+            <label class="small text-muted mb-1">Filter by Shape Type</label>
+            <select class="form-select" onchange="setOffcutShapeFilter(${jsStr(viewKey)}, this.value)">
+              <option value="ALL"${state.shapeType === 'ALL' ? ' selected' : ''}>All Shapes</option>
+              ${shapeTypes.map(type => `<option value="${escHtml(type)}"${state.shapeType === type ? ' selected' : ''}>${escHtml(type)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="col-12 col-md-6">
+            <label class="small text-muted mb-1">Sort by Area</label>
+            <select class="form-select" onchange="setOffcutSort(${jsStr(viewKey)}, this.value)">
+              <option value="area_desc"${state.sortBy === 'area_desc' ? ' selected' : ''}>Largest to Smallest</option>
+              <option value="area_asc"${state.sortBy === 'area_asc' ? ' selected' : ''}>Smallest to Largest</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
     <div class="table-responsive bg-white rounded shadow-sm border">
       <table class="table table-hover align-middle mb-0 text-start">
         <thead class="bg-light">
@@ -218,12 +291,20 @@ function buildOffcutTable(rows) {
             <th>Shape Type</th>
             <th>Length</th>
             <th>Width</th>
+            <th class="text-center">Qty</th>
             <th class="pe-3">Area (m²)</th>
           </tr>
         </thead>
         <tbody>`;
 
-  rows.forEach(item => {
+  if (!filteredRows.length) {
+    html += `
+      <tr>
+        <td colspan="7" class="text-center text-muted py-4">No offcuts found.</td>
+      </tr>`;
+  }
+
+  filteredRows.forEach(item => {
     html += `
       <tr class="wood-row">
         <td class="ps-3 fw-bold text-dark">${escHtml(item.externalOffcutId || item.offcutId || item.rowIndex || "-")}</td>
@@ -231,6 +312,7 @@ function buildOffcutTable(rows) {
         <td>${escHtml(item.shapeType || "-")}</td>
         <td style="font-family:monospace;">${formatOffcutMm(item.length)}</td>
         <td style="font-family:monospace;">${formatOffcutMm(item.width)}</td>
+        <td class="text-center fw-bold">${fmtNum(item.qty, 0)}</td>
         <td class="pe-3">${formatOffcutArea(item.areaM2)}</td>
       </tr>`;
   });
@@ -1208,7 +1290,7 @@ function renderWoodStockManager() {
   // Render each container
   instockEl.innerHTML = buildTable(fullSheetsInStock, 'stock');
   onorderEl.innerHTML = buildTable(sheetsOnOrder, 'onorder');
-  offcutsEl.innerHTML = buildOffcutTable(offcutsInStock);
+  offcutsEl.innerHTML = buildOffcutTable(offcutsInStock, 'stock');
 }
 
 
@@ -2534,7 +2616,7 @@ function openCNCNester() {
     const offcuts = dataToRender.filter(x => isOffcut(x) && (Number(x.qty) || 0) > 0);
 
     cncSheetsEl.innerHTML = generateTable('cnc', sheets);
-    cncOffcutsEl.innerHTML = buildOffcutTable(offcuts);
+    cncOffcutsEl.innerHTML = buildOffcutTable(offcuts, 'cnc');
 
     // keep whichever tab is selected visible
     switchCncWoodSubTab(currentCncWoodSubTab || 'sheets');
