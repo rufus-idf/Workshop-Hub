@@ -5,6 +5,7 @@ const LEGACY_FINISHED_GOODS_TAB_NAME = "Finished Goods";
 const OFFCUT_SHEET_ID = "1-qS6gWekGtEhjczboAyAShJHHamK0ZuVlR7CFbubxxo";
 const OFFCUT_INVENTORY_TAB_NAME = "offcut_inventory";
 const OFFCUT_SHAPES_TAB_NAME = "offcut_shapes";
+const OFFCUT_TEXTURE_LIBRARY_TAB_NAME = "texture_library";
 
 function squeezeSpaces_(v) {
   return String(v ?? "").replace(/\u00A0/g, " ").trim().replace(/\s+/g, " ");
@@ -71,11 +72,44 @@ function parseJsonArraySafe_(value, fallback) {
   }
 }
 
+function getOffcutTextureLibrary_(ss) {
+  const sheet = ss.getSheetByName(OFFCUT_TEXTURE_LIBRARY_TAB_NAME);
+  if (!sheet || sheet.getLastRow() < 2) return {};
+
+  const data = sheet.getDataRange().getValues();
+  const map = getHeaderIndexMap_(data[0]);
+  const library = {};
+
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    const material = squeezeSpaces_(getRowValueByHeaders_(row, map, "material"));
+    if (!material) continue;
+
+    const activeRaw = String(getRowValueByHeaders_(row, map, "active") || "").trim().toLowerCase();
+    const isActive = activeRaw === "true" || activeRaw === "yes" || activeRaw === "y" || activeRaw === "1";
+    if (!isActive) continue;
+
+    const textureUrl = squeezeSpaces_(getRowValueByHeaders_(row, map, "texture_url"));
+    const solidColorHex = squeezeSpaces_(getRowValueByHeaders_(row, map, "solid_color_hex"));
+    const textureType = squeezeSpaces_(getRowValueByHeaders_(row, map, "texture_type")).toUpperCase();
+
+    library[material.toLowerCase()] = {
+      textureType: textureType,
+      textureUrl: textureUrl,
+      solidColorHex: /^#?[0-9a-f]{3,8}$/i.test(solidColorHex) ? (solidColorHex.startsWith("#") ? solidColorHex : `#${solidColorHex}`) : "",
+      hasTexture: /^https?:\/\//i.test(textureUrl)
+    };
+  }
+
+  return library;
+}
+
 function getExternalOffcutInventory_() {
   try {
     const ss = SpreadsheetApp.openById(OFFCUT_SHEET_ID);
     const inventorySheet = ss.getSheetByName(OFFCUT_INVENTORY_TAB_NAME);
     const shapesSheet = ss.getSheetByName(OFFCUT_SHAPES_TAB_NAME);
+    const textureLibrary = getOffcutTextureLibrary_(ss);
 
     if (!inventorySheet || inventorySheet.getLastRow() < 2) return [];
 
@@ -122,11 +156,13 @@ function getExternalOffcutInventory_() {
       const areaMm2 = Number(getRowValueByHeaders_(row, inventoryMap, "area_mm2")) || 0;
       const shapeRef = squeezeSpaces_(getRowValueByHeaders_(row, inventoryMap, "shape_ref"));
       const shape = shapesByOffcutId[offcutId] || shapesByRef[shapeRef] || null;
+      const material = squeezeSpaces_(getRowValueByHeaders_(row, inventoryMap, "material"));
+      const textureEntry = textureLibrary[material.toLowerCase()] || null;
 
       offcuts.push({
         rowIndex: `offcut:${offcutId}`,
         externalOffcutId: offcutId,
-        material: squeezeSpaces_(getRowValueByHeaders_(row, inventoryMap, "material")),
+        material: material,
         type: "Offcut",
         shapeType: squeezeSpaces_(getRowValueByHeaders_(row, inventoryMap, "shape_type")) || "POLYGON",
         length: lengthMm,
@@ -141,6 +177,9 @@ function getExternalOffcutInventory_() {
         grade: squeezeSpaces_(getRowValueByHeaders_(row, inventoryMap, "grade")),
         location: squeezeSpaces_(getRowValueByHeaders_(row, inventoryMap, "location")),
         shapeRef: shapeRef,
+        textureType: textureEntry ? textureEntry.textureType : "",
+        textureUrl: textureEntry && textureEntry.hasTexture ? textureEntry.textureUrl : "",
+        solidColorHex: textureEntry ? textureEntry.solidColorHex : "",
         coordUnit: shape ? shape.coordUnit : "",
         verticesJson: shape ? shape.verticesJson : [],
         holesJson: shape ? shape.holesJson : []

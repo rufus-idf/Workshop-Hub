@@ -352,13 +352,32 @@ function buildOffcutPreviewMarkup(offcut) {
     buildSvgPath(outlineSvg),
     ...holesSvg.map(buildSvgPath)
   ].filter(Boolean).join(' ');
+  const patternId = `offcut-texture-${getOffcutItemId(offcut).replace(/[^a-z0-9_-]/gi, '-').toLowerCase() || 'preview'}`;
+  const textureType = String(offcut?.textureType || '').trim().toUpperCase();
+  const textureUrl = String(offcut?.textureUrl || '').trim();
+  const solidColorHex = String(offcut?.solidColorHex || '').trim();
+  const hasTexture = textureType === 'TEXTURE' && /^https?:\/\//i.test(textureUrl);
+  const fillValue = hasTexture
+    ? `url(#${patternId})`
+    : (textureType === 'SOLID' && /^#?[0-9a-f]{3,8}$/i.test(solidColorHex)
+        ? (solidColorHex.startsWith('#') ? solidColorHex : `#${solidColorHex}`)
+        : 'rgba(116, 170, 198, 0.55)');
+  const defsMarkup = hasTexture
+    ? `
+        <defs>
+          <pattern id="${patternId}" patternUnits="userSpaceOnUse" width="220" height="220">
+            <image href="${escHtml(textureUrl)}" x="0" y="0" width="220" height="220" preserveAspectRatio="xMidYMid slice"></image>
+          </pattern>
+        </defs>`
+    : '';
 
   return `
     <div class="text-center small text-muted mb-3">Edge lengths shown in mm.</div>
     <div class="border rounded bg-light-subtle p-2">
       <svg viewBox="0 0 ${canvasWidth} ${canvasHeight}" class="w-100" role="img" aria-label="Offcut shape preview">
+        ${defsMarkup}
         <path d="${compoundPath}"
-              fill="rgba(116, 170, 198, 0.55)"
+              fill="${fillValue}"
               stroke="#1f5a82"
               stroke-width="5"
               fill-rule="evenodd"></path>
