@@ -204,13 +204,13 @@ function formatOffcutArea(value) {
 }
 
 const offcutViewState = {
-  stock: { shapeType: 'ALL', woodType: 'ALL', sortBy: 'area_desc' },
-  cnc: { shapeType: 'ALL', woodType: 'ALL', sortBy: 'area_desc' }
+  stock: { shapeType: 'ALL', woodType: 'ALL', searchTerm: '', sortBy: 'area_desc' },
+  cnc: { shapeType: 'ALL', woodType: 'ALL', searchTerm: '', sortBy: 'area_desc' }
 };
 
 function getOffcutViewState(viewKey) {
   if (!offcutViewState[viewKey]) {
-    offcutViewState[viewKey] = { shapeType: 'ALL', woodType: 'ALL', sortBy: 'area_desc' };
+    offcutViewState[viewKey] = { shapeType: 'ALL', woodType: 'ALL', searchTerm: '', sortBy: 'area_desc' };
   }
   return offcutViewState[viewKey];
 }
@@ -231,6 +231,11 @@ function setOffcutShapeFilter(viewKey, value) {
 
 function setOffcutWoodTypeFilter(viewKey, value) {
   getOffcutViewState(viewKey).woodType = value || 'ALL';
+  rerenderOffcutView(viewKey);
+}
+
+function setOffcutSearch(viewKey, value) {
+  getOffcutViewState(viewKey).searchTerm = String(value || '');
   rerenderOffcutView(viewKey);
 }
 
@@ -436,11 +441,14 @@ function buildOffcutTable(rows, viewKey) {
   )).sort((a, b) => a.localeCompare(b));
 
   const filteredRows = safeRows.filter(item => {
+    const offcutId = getOffcutItemId(item).toLowerCase();
     const shapeType = String(item.shapeType || '').trim().toUpperCase();
     const woodType = String(item.material || '').trim();
+    const searchTerm = String(state.searchTerm || '').trim().toLowerCase();
+    const searchMatch = !searchTerm || offcutId.includes(searchTerm);
     const shapeMatch = state.shapeType === 'ALL' || shapeType === state.shapeType;
     const woodMatch = state.woodType === 'ALL' || woodType === state.woodType;
-    return shapeMatch && woodMatch;
+    return searchMatch && shapeMatch && woodMatch;
   });
 
   filteredRows.sort((a, b) => {
@@ -460,21 +468,29 @@ function buildOffcutTable(rows, viewKey) {
     <div class="card border-0 shadow-sm mb-3">
       <div class="card-body">
         <div class="row g-2 align-items-end">
-          <div class="col-12 col-md-4">
+          <div class="col-12 col-lg-3">
+            <label class="small text-muted mb-1">Search Offcut ID</label>
+            <input type="text"
+                   class="form-control"
+                   placeholder="e.g. S01 or 52242"
+                   value="${escHtml(state.searchTerm || '')}"
+                   oninput="setOffcutSearch('${viewKeyArg}', this.value)">
+          </div>
+          <div class="col-12 col-md-4 col-lg-3">
             <label class="small text-muted mb-1">Filter by Wood Type</label>
             <select class="form-select" onchange="setOffcutWoodTypeFilter('${viewKeyArg}', this.value)">
               <option value="ALL"${state.woodType === 'ALL' ? ' selected' : ''}>All Wood Types</option>
               ${woodTypes.map(type => `<option value="${escHtml(type)}"${state.woodType === type ? ' selected' : ''}>${escHtml(type)}</option>`).join('')}
             </select>
           </div>
-          <div class="col-12 col-md-4">
+          <div class="col-12 col-md-4 col-lg-3">
             <label class="small text-muted mb-1">Filter by Shape Type</label>
             <select class="form-select" onchange="setOffcutShapeFilter('${viewKeyArg}', this.value)">
               <option value="ALL"${state.shapeType === 'ALL' ? ' selected' : ''}>All Shapes</option>
               ${shapeTypes.map(type => `<option value="${escHtml(type)}"${state.shapeType === type ? ' selected' : ''}>${escHtml(type)}</option>`).join('')}
             </select>
           </div>
-          <div class="col-12 col-md-4">
+          <div class="col-12 col-md-4 col-lg-3">
             <label class="small text-muted mb-1">Sort by Area</label>
             <select class="form-select" onchange="setOffcutSort('${viewKeyArg}', this.value)">
               <option value="area_desc"${state.sortBy === 'area_desc' ? ' selected' : ''}>Largest to Smallest</option>
