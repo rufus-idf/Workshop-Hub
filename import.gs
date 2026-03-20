@@ -45,6 +45,20 @@ function updateManufactureHub() {
 
   // --- READ DATA ---
   const allOrderData = orderSheet.getDataRange().getValues(); // Read whole order sheet
+  const orderHeaders = (allOrderData[0] || []).map(h => _normTxt(h).toLowerCase());
+  const orderHeaderMap = _headerMap_(orderHeaders);
+  const idxOrderId = orderHeaderMap["order id"];
+  const idxCustomer = orderHeaderMap["customer"];
+  const idxAddress = orderHeaderMap["shipping address"];
+  const idxProductName = orderHeaderMap["product name"];
+  const idxSku = orderHeaderMap["product code"];
+  const idxQty = orderHeaderMap["quantity ordered"];
+  const idxStatus = orderHeaderMap["import status"];
+  if ([idxOrderId, idxCustomer, idxAddress, idxProductName, idxSku, idxQty, idxStatus].some(x => x == null)) {
+    Browser.msgBox("Error: Shopify Orders headers don't match expected names.");
+    return;
+  }
+
   const productData = productSheet.getDataRange().getValues(); // Read whole product sheet
   const productMap = {};
   for (let p = 1; p < productData.length; p++) {
@@ -100,10 +114,9 @@ function updateManufactureHub() {
     const orderRow = allOrderData[i];
     
     // Safety: If row is completely empty, skip
-    if (!orderRow[0]) continue;
+    if (!orderRow[idxOrderId]) continue;
 
-    // Import Status is Column H (index 7)
-const importStatus = String(orderRow[7] || "").trim();
+    const importStatus = String(orderRow[idxStatus] || "").trim();
 const st = importStatus.toUpperCase();
 
 // Skip if already imported
@@ -118,16 +131,12 @@ const allocMatch = importStatus.match(/ALLOCATED\s+(\d+)\s+FROM\s+STOCK/i);
 const allocatedUnits = allocMatch ? (parseInt(allocMatch[1], 10) || 0) : 0;
 
 
-    const orderId = orderRow[0];        // Col A
-    const customer = orderRow[2];       // Col C
-    
-    // NEW: Define the Address variable (Col D / Index 3)
-    const address = orderRow[3];        
-
-    // SHIFTED: Everything else moves right by 1
-    const productName = orderRow[4];    // Col E
-    const orderSku = String(orderRow[5]).trim(); // Col F
-    const orderQty = orderRow[6];       // Col G
+    const orderId = orderRow[idxOrderId];
+    const customer = orderRow[idxCustomer];
+    const address = orderRow[idxAddress];
+    const productName = orderRow[idxProductName];
+    const orderSku = String(orderRow[idxSku]).trim();
+    const orderQty = orderRow[idxQty];
     let skuFound = false;
 
     // --- SEARCH PRODUCT MAP ---
@@ -244,10 +253,10 @@ rowsForPanels.push([
  // --- UPDATE STATUS ---
   // Mark successes as "Imported"
   if (processedRows.length > 0) {
-    const statusCol = 8; // Column H is the 8th column
+    const statusCol = idxStatus + 1;
     processedRows.forEach(r => {
       const prev = String(orderSheet.getRange(r, statusCol).getValue() || "").trim();
-orderSheet.getRange(r, statusCol).setValue(prev ? `IMPORTED | ${prev}` : "IMPORTED");
+      orderSheet.getRange(r, statusCol).setValue(prev ? `IMPORTED | ${prev}` : "IMPORTED");
     });
   }
 
