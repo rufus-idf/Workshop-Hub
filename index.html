@@ -657,6 +657,23 @@
 
   <?!= include('JS'); ?>
 
+  <div class="modal fade" id="offcutPreviewModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+      <div class="modal-content border-0 shadow">
+        <div class="modal-header border-0 pb-0">
+          <div>
+            <h5 class="modal-title fw-bold" id="offcut-preview-title">Offcut Preview</h5>
+            <small class="text-muted">Exact offcut shape with edge lengths in mm.</small>
+          </div>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div id="offcut-preview-body" class="text-center text-muted py-4">Loading preview...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="modal fade" id="allocateModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
       <div class="modal-content border-0 shadow">
@@ -686,31 +703,6 @@
                 <input type="number" id="alloc-qty" class="form-control text-center mx-2 fw-bold" value="1" style="max-width:80px;">
                 <button class="btn btn-outline-secondary" onclick="stepAllocQty(1)">+</button>
             </div>
-
-            <hr>
-
-            <div class="form-check form-switch mb-3">
-                <input class="form-check-input" type="checkbox" id="alloc-log-offcut" onchange="toggleOffcutFields()">
-                <label class="form-check-label fw-bold" for="alloc-log-offcut">Generate Offcut?</label>
-            </div>
-
-            <div id="alloc-offcut-fields" class="hidden bg-light p-3 rounded">
-                <div class="row g-2">
-                    <div class="col-6">
-                        <small>Length (mm)</small>
-                        <input type="number" id="off-len" class="form-control" placeholder="L">
-                    </div>
-                    <div class="col-6">
-                        <small>Width (mm)</small>
-                        <input type="number" id="off-wid" class="form-control" placeholder="W">
-                    </div>
-                    <div class="col-12 mt-2">
-                        <small>Quantity Created</small>
-                        <input type="number" id="off-qty" class="form-control" value="1">
-                    </div>
-                </div>
-            </div>
-
         </div>
 
         <div class="modal-footer border-0">

@@ -2,6 +2,10 @@ const SHOPIFY_ORDERS_SHEET_ID = "1KDDVnIZ5oCruCY4nyKp6XVqwWnL7-N6f-pKAD3xXo_U";
 const SHOPIFY_ORDERS_TAB_NAME = "Sheet1";
 const FURNITURE_STOCK_TAB_NAME = "Furniture Stock";
 const LEGACY_FINISHED_GOODS_TAB_NAME = "Finished Goods";
+const OFFCUT_SHEET_ID = "1-qS6gWekGtEhjczboAyAShJHHamK0ZuVlR7CFbubxxo";
+const OFFCUT_INVENTORY_TAB_NAME = "offcut_inventory";
+const OFFCUT_SHAPES_TAB_NAME = "offcut_shapes";
+const OFFCUT_TEXTURE_LIBRARY_TAB_NAME = "texture_library";
 
 function squeezeSpaces_(v) {
   return String(v ?? "").replace(/\u00A0/g, " ").trim().replace(/\s+/g, " ");
@@ -34,6 +38,159 @@ function getEdgeBandColumnMap_(sheet) {
     onOrder: findIndex(["rolls on order", "on order"], 4),
     rolls: findIndex(["rolls in stock", "in stock"], 5)
   };
+}
+
+function getHeaderIndexMap_(headers) {
+  const map = {};
+  (headers || []).forEach((header, index) => {
+    const key = squeezeSpaces_(header).toLowerCase();
+    if (key) map[key] = index;
+  });
+  return map;
+}
+
+function getRowValueByHeaders_(row, headerMap, names) {
+  const headerNames = Array.isArray(names) ? names : [names];
+  for (let i = 0; i < headerNames.length; i++) {
+    const key = squeezeSpaces_(headerNames[i]).toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(headerMap, key)) {
+      return row[headerMap[key]];
+    }
+  }
+  return "";
+}
+
+function parseJsonArraySafe_(value, fallback) {
+  if (Array.isArray(value)) return value;
+  const raw = String(value || "").trim();
+  if (!raw) return fallback;
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : fallback;
+  } catch (err) {
+    return fallback;
+  }
+}
+
+function getOffcutTextureLibrary_(ss) {
+  const sheet = ss.getSheetByName(OFFCUT_TEXTURE_LIBRARY_TAB_NAME);
+  if (!sheet || sheet.getLastRow() < 2) return {};
+
+  const data = sheet.getDataRange().getValues();
+  const map = getHeaderIndexMap_(data[0]);
+  const library = {};
+
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    const material = squeezeSpaces_(getRowValueByHeaders_(row, map, "material"));
+    if (!material) continue;
+
+    const activeRaw = String(getRowValueByHeaders_(row, map, "active") || "").trim().toLowerCase();
+    const isActive = activeRaw === "true" || activeRaw === "yes" || activeRaw === "y" || activeRaw === "1";
+    if (!isActive) continue;
+
+    const textureUrl = squeezeSpaces_(getRowValueByHeaders_(row, map, "texture_url"));
+    const solidColorHex = squeezeSpaces_(getRowValueByHeaders_(row, map, "solid_color_hex"));
+    const textureType = squeezeSpaces_(getRowValueByHeaders_(row, map, "texture_type")).toUpperCase();
+
+    library[material.toLowerCase()] = {
+      textureType: textureType,
+      textureUrl: textureUrl,
+      solidColorHex: /^#?[0-9a-f]{3,8}$/i.test(solidColorHex) ? (solidColorHex.startsWith("#") ? solidColorHex : `#${solidColorHex}`) : "",
+      hasTexture: /^https?:\/\//i.test(textureUrl)
+    };
+  }
+
+  return library;
+}
+
+function getExternalOffcutInventory_() {
+  try {
+    const ss = SpreadsheetApp.openById(OFFCUT_SHEET_ID);
+    const inventorySheet = ss.getSheetByName(OFFCUT_INVENTORY_TAB_NAME);
+    const shapesSheet = ss.getSheetByName(OFFCUT_SHAPES_TAB_NAME);
+    const textureLibrary = getOffcutTextureLibrary_(ss);
+
+    if (!inventorySheet || inventorySheet.getLastRow() < 2) return [];
+
+    const inventoryData = inventorySheet.getDataRange().getValues();
+    const inventoryMap = getHeaderIndexMap_(inventoryData[0]);
+
+    const shapesByOffcutId = {};
+    const shapesByRef = {};
+    if (shapesSheet && shapesSheet.getLastRow() > 1) {
+      const shapesData = shapesSheet.getDataRange().getValues();
+      const shapesMap = getHeaderIndexMap_(shapesData[0]);
+
+      for (let i = 1; i < shapesData.length; i++) {
+        const row = shapesData[i];
+        const offcutId = squeezeSpaces_(getRowValueByHeaders_(row, shapesMap, "offcut_id"));
+        const shapeRef = squeezeSpaces_(getRowValueByHeaders_(row, shapesMap, "shape_ref"));
+        const shapeRecord = {
+          shapeRef: shapeRef,
+          coordUnit: squeezeSpaces_(getRowValueByHeaders_(row, shapesMap, "coord_unit")),
+          bboxXmm: Number(getRowValueByHeaders_(row, shapesMap, "bbox_x_mm")) || 0,
+          bboxYmm: Number(getRowValueByHeaders_(row, shapesMap, "bbox_y_mm")) || 0,
+          verticesJson: parseJsonArraySafe_(getRowValueByHeaders_(row, shapesMap, "vertices_json"), []),
+          holesJson: parseJsonArraySafe_(getRowValueByHeaders_(row, shapesMap, "holes_json"), []),
+          version: getRowValueByHeaders_(row, shapesMap, "version")
+        };
+
+        if (offcutId) shapesByOffcutId[offcutId] = shapeRecord;
+        if (shapeRef) shapesByRef[shapeRef] = shapeRecord;
+      }
+    }
+
+    const offcuts = [];
+    for (let i = 1; i < inventoryData.length; i++) {
+      const row = inventoryData[i];
+      const offcutId = squeezeSpaces_(getRowValueByHeaders_(row, inventoryMap, "offcut_id"));
+      const status = squeezeSpaces_(getRowValueByHeaders_(row, inventoryMap, "status")).toUpperCase();
+      const qty = Number(getRowValueByHeaders_(row, inventoryMap, "qty")) || 0;
+      if (!offcutId || status !== "IN_STOCK" || qty <= 0) continue;
+
+      const bboxW = Number(getRowValueByHeaders_(row, inventoryMap, "bbox_w_mm")) || 0;
+      const bboxH = Number(getRowValueByHeaders_(row, inventoryMap, "bbox_h_mm")) || 0;
+      const lengthMm = Math.max(bboxW, bboxH);
+      const widthMm = Math.min(bboxW, bboxH);
+      const areaMm2 = Number(getRowValueByHeaders_(row, inventoryMap, "area_mm2")) || 0;
+      const shapeRef = squeezeSpaces_(getRowValueByHeaders_(row, inventoryMap, "shape_ref"));
+      const shape = shapesByOffcutId[offcutId] || shapesByRef[shapeRef] || null;
+      const material = squeezeSpaces_(getRowValueByHeaders_(row, inventoryMap, "material"));
+      const textureEntry = textureLibrary[material.toLowerCase()] || null;
+
+      offcuts.push({
+        rowIndex: `offcut:${offcutId}`,
+        externalOffcutId: offcutId,
+        material: material,
+        type: "Offcut",
+        shapeType: squeezeSpaces_(getRowValueByHeaders_(row, inventoryMap, "shape_type")) || "POLYGON",
+        length: lengthMm,
+        width: widthMm,
+        size: `${lengthMm} x ${widthMm}`,
+        areaMm2: areaMm2,
+        areaM2: areaMm2 / 1000000,
+        onOrder: 0,
+        qty: qty,
+        status: status,
+        thicknessMm: Number(getRowValueByHeaders_(row, inventoryMap, "thickness_mm")) || 0,
+        grade: squeezeSpaces_(getRowValueByHeaders_(row, inventoryMap, "grade")),
+        location: squeezeSpaces_(getRowValueByHeaders_(row, inventoryMap, "location")),
+        shapeRef: shapeRef,
+        textureType: textureEntry ? textureEntry.textureType : "",
+        textureUrl: textureEntry && textureEntry.hasTexture ? textureEntry.textureUrl : "",
+        solidColorHex: textureEntry ? textureEntry.solidColorHex : "",
+        coordUnit: shape ? shape.coordUnit : "",
+        verticesJson: shape ? shape.verticesJson : [],
+        holesJson: shape ? shape.holesJson : []
+      });
+    }
+
+    return offcuts;
+  } catch (err) {
+    console.warn("Unable to load external offcut inventory.", err);
+    return [];
+  }
 }
 
 function canonicalRoomName_(v) {
@@ -2209,12 +2366,15 @@ function getInventoryData() {
   if (woodSheet && woodSheet.getLastRow() > 1) {
     const data = woodSheet.getDataRange().getValues();
     for (let i = 1; i < data.length; i++) {
+      const type = String(data[i][1] || "").trim();
+      if (type.toLowerCase() === "offcut") continue;
+
       // DEBUG: Ensure we are reading the right column
       // row[0] = Material, row[1] = Type, row[2] = Len, row[3] = Wid, row[4] = Qty
       result.wood.push({
         rowIndex: i + 1,
         material: String(data[i][0]), // Col A
-        type: data[i][1],             // Col B
+        type: type,                   // Col B
         length: data[i][2],           // Col C
         width: data[i][3],            // Col D
         size: `${data[i][2]} x ${data[i][3]}`, 
@@ -2223,6 +2383,9 @@ function getInventoryData() {
       });
     }
   }
+
+  result.wood = result.wood.concat(getExternalOffcutInventory_());
+
   // C. EDGE BAND STOCK (Header-driven)
   if (edgeSheet && edgeSheet.getLastRow() > 1) {
     const data = edgeSheet.getDataRange().getValues();
@@ -2333,53 +2496,96 @@ function adjustComponentStock(rowIndex, change, reason) {
 
 
 
-// 3. ALLOCATE WOOD (Updated for Summary Log)
-function allocateWood(rowIndex, qtyUsed, projectId, productName, offcutData) {
+function allocateExternalOffcut_(itemKey, qtyUsed, projectId, productName) {
+  const offcutId = String(itemKey || '').replace(/^offcut:/i, '').trim();
+  if (!offcutId) throw new Error("Invalid offcut id.");
+
+  const extSs = SpreadsheetApp.openById(OFFCUT_SHEET_ID);
+  const inventorySheet = extSs.getSheetByName(OFFCUT_INVENTORY_TAB_NAME);
+  if (!inventorySheet || inventorySheet.getLastRow() < 2) throw new Error("External offcut inventory tab missing.");
+
+  const data = inventorySheet.getDataRange().getValues();
+  const map = getHeaderIndexMap_(data[0]);
+
+  let rowIndex = -1;
+  let row = null;
+  for (let i = 1; i < data.length; i++) {
+    const candidateId = squeezeSpaces_(getRowValueByHeaders_(data[i], map, "offcut_id"));
+    if (candidateId === offcutId) {
+      rowIndex = i + 1;
+      row = data[i];
+      break;
+    }
+  }
+
+  if (!rowIndex || !row) throw new Error("Offcut not found in external inventory.");
+
+  const qtyColIndex = (map["qty"] ?? -1) + 1;
+  const statusColIndex = (map["status"] ?? -1) + 1;
+  if (qtyColIndex <= 0) throw new Error("External offcut inventory is missing a qty column.");
+
+  const currentQty = Number(getRowValueByHeaders_(row, map, "qty")) || 0;
+  if (qtyUsed > currentQty) throw new Error("Insufficient offcut stock.");
+
+  const materialName = squeezeSpaces_(getRowValueByHeaders_(row, map, "material"));
+  const bboxW = Number(getRowValueByHeaders_(row, map, "bbox_w_mm")) || 0;
+  const bboxH = Number(getRowValueByHeaders_(row, map, "bbox_h_mm")) || 0;
+  const lengthMm = Math.max(bboxW, bboxH);
+  const widthMm = Math.min(bboxW, bboxH);
+  const newQty = currentQty - qtyUsed;
+
+  inventorySheet.getRange(rowIndex, qtyColIndex).setValue(newQty);
+  if (statusColIndex > 0) {
+    inventorySheet.getRange(rowIndex, statusColIndex).setValue(newQty > 0 ? "IN_STOCK" : "DEPLETED");
+  }
+
+  const historyMaterialName = `Offcut ${offcutId}: ${materialName} - ${lengthMm} x ${widthMm}`;
+  const historyReason = `CNC Job: #${projectId} (${productName})`;
+  logStockTransaction(historyMaterialName, -qtyUsed, historyReason);
+  updateProjectUsageSummary(projectId, productName, materialName, qtyUsed);
+
+  return "Success";
+}
+
+function allocateWoodSheet_(rowIndex, qtyUsed, projectId, productName) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const stockSheet = ss.getSheetByName("Wood Stock");
-  
   if (!stockSheet) throw new Error("Wood Stock tab missing");
 
-  // 1. DEDUCT STOCK (Physical Inventory)
-  const currentQty = stockSheet.getRange(rowIndex, 6).getValue(); // Col F = Qty in Stock
+  const currentQty = stockSheet.getRange(rowIndex, 6).getValue();
   const newQty = (Number(currentQty) || 0) - Number(qtyUsed);
   if (newQty < 0) throw new Error("Insufficient stock.");
   stockSheet.getRange(rowIndex, 6).setValue(newQty);
 
-  // 2. LOG HISTORY (The "Book" Icon - Transactional)
-  const materialName = stockSheet.getRange(rowIndex, 1).getValue(); // Col A
-  const stockType = String(stockSheet.getRange(rowIndex, 2).getValue() || '').trim().toLowerCase(); // Col B = Type
-  const offcutLength = Number(stockSheet.getRange(rowIndex, 3).getValue()) || 0; // Col C = Length
-  const offcutWidth = Number(stockSheet.getRange(rowIndex, 4).getValue()) || 0; // Col D = Width
-  const isOffcutAllocation = stockType === 'offcut' && offcutLength > 0 && offcutWidth > 0;
-
-  const historyMaterialName = isOffcutAllocation
-    ? `Offcut: ${materialName} - ${offcutLength} x ${offcutWidth}`
-    : materialName;
-
-  let historyReason = `CNC Job: #${projectId} (${productName})`;
-  if(offcutData) historyReason += " [Offcut Generated]";
-  
-  // This goes to 'Stock History' tab
-  logStockTransaction(historyMaterialName, -qtyUsed, historyReason);
-
-  // 3. UPDATE PROJECT SUMMARY (The "Wood Usage Log" Tab)
-  // This aggregates the totals nicely
+  const materialName = stockSheet.getRange(rowIndex, 1).getValue();
+  const historyReason = `CNC Job: #${projectId} (${productName})`;
+  logStockTransaction(materialName, -qtyUsed, historyReason);
   updateProjectUsageSummary(projectId, productName, materialName, qtyUsed);
 
-  // 4. CREATE OFFCUT (Physical Inventory)
-  if (offcutData) {
-    stockSheet.appendRow([
-      materialName,        // A: Material
-      "Offcut",            // B: Type
-      offcutData.length,   // C: Length
-      offcutData.width,    // D: Width
-      0,                   // E: Qty on Order
-      offcutData.qty       // f: Qty
-    ]);
-  }
-  
   return "Success";
+}
+
+// 3. ALLOCATE WOOD / OFFCUTS
+function allocateWood(itemKey, qtyUsed, projectId, productName) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    const qty = Math.floor(Number(qtyUsed) || 0);
+    if (qty <= 0) throw new Error("Quantity must be at least 1.");
+
+    const key = String(itemKey || "").trim();
+    if (!key) throw new Error("Missing stock item key.");
+
+    if (/^offcut:/i.test(key)) {
+      return allocateExternalOffcut_(key, qty, projectId, productName);
+    }
+
+    const rowIndex = Number(key);
+    if (!rowIndex) throw new Error("Invalid wood stock row.");
+    return allocateWoodSheet_(rowIndex, qty, projectId, productName);
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function adjustWoodOnOrder(rowIndex, change) {
