@@ -264,7 +264,7 @@ orderSheet.getRange(r, statusCol).setValue(prev ? `IMPORTED | ${prev}` : "IMPORT
   }
 }
 
-function importApprovedShopifyRow_(shopifyRowIndex) {
+function importApprovedShopifyRow_(shopifyRowIndex, mergeTargetOrderId) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const hubSheet = ss.getSheetByName("Manufacture Hub");
   const compSheet = ss.getSheetByName("Components Hub");
@@ -458,6 +458,12 @@ function importApprovedShopifyRow_(shopifyRowIndex) {
   const cleaned = status.replace(/^IMPORTED\s*\|?/i, "").trim();
   const nextStatus = cleaned ? `IMPORTED | ${cleaned}` : "IMPORTED";
   orderSheet.getRange(shopifyRowIndex, idxStatus + 1).setValue(nextStatus);
+
+  const mergeTarget = _normTxt(mergeTargetOrderId);
+  if (mergeTarget && !isWorkshop) {
+    const mergedInto = mergeImportedOrderIntoExisting_(orderId, mergeTarget, customer);
+    return `SUCCESS|MERGED|${mergedInto}`;
+  }
 
   return "SUCCESS";
 }
