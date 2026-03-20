@@ -193,6 +193,52 @@ const fmtNum = (v, digits = 0) => {
 const fmtMaybe = (v, digits = 0) => (v == null ? "-" : fmtNum(v, digits));
 const jsStr = (s) => JSON.stringify(String(s ?? ""));
 
+function formatOffcutMm(value) {
+  const num = Number(value) || 0;
+  return `${fmtNum(num, 0)} mm`;
+}
+
+function formatOffcutArea(value) {
+  const num = Number(value) || 0;
+  return `${fmtNum(num, 3)} m²`;
+}
+
+function buildOffcutTable(rows) {
+  if (!rows || !rows.length) {
+    return `<div class="text-center text-muted py-4">No offcuts found.</div>`;
+  }
+
+  let html = `
+    <div class="table-responsive bg-white rounded shadow-sm border">
+      <table class="table table-hover align-middle mb-0 text-start">
+        <thead class="bg-light">
+          <tr class="text-secondary small text-uppercase">
+            <th class="ps-3">Offcut ID</th>
+            <th>Material</th>
+            <th>Shape Type</th>
+            <th>Length</th>
+            <th>Width</th>
+            <th class="pe-3">Area (m²)</th>
+          </tr>
+        </thead>
+        <tbody>`;
+
+  rows.forEach(item => {
+    html += `
+      <tr class="wood-row">
+        <td class="ps-3 fw-bold text-dark">${escHtml(item.externalOffcutId || item.offcutId || item.rowIndex || "-")}</td>
+        <td>${escHtml(item.material || "Unknown")}</td>
+        <td>${escHtml(item.shapeType || "-")}</td>
+        <td style="font-family:monospace;">${formatOffcutMm(item.length)}</td>
+        <td style="font-family:monospace;">${formatOffcutMm(item.width)}</td>
+        <td class="pe-3">${formatOffcutArea(item.areaM2)}</td>
+      </tr>`;
+  });
+
+  html += `</tbody></table></div>`;
+  return html;
+}
+
 function getOrderDisplayIds(orderObj, fallbackId = "") {
   const ids = Array.isArray(orderObj?.displayOrderIds) && orderObj.displayOrderIds.length
     ? orderObj.displayOrderIds
@@ -1162,7 +1208,7 @@ function renderWoodStockManager() {
   // Render each container
   instockEl.innerHTML = buildTable(fullSheetsInStock, 'stock');
   onorderEl.innerHTML = buildTable(sheetsOnOrder, 'onorder');
-  offcutsEl.innerHTML = buildTable(offcutsInStock, 'stock');
+  offcutsEl.innerHTML = buildOffcutTable(offcutsInStock);
 }
 
 
@@ -2488,7 +2534,7 @@ function openCNCNester() {
     const offcuts = dataToRender.filter(x => isOffcut(x) && (Number(x.qty) || 0) > 0);
 
     cncSheetsEl.innerHTML = generateTable('cnc', sheets);
-    cncOffcutsEl.innerHTML = generateTable('cnc', offcuts);
+    cncOffcutsEl.innerHTML = buildOffcutTable(offcuts);
 
     // keep whichever tab is selected visible
     switchCncWoodSubTab(currentCncWoodSubTab || 'sheets');
