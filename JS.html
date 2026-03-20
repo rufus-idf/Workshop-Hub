@@ -233,6 +233,22 @@ function getRoomItemSourceOrderIds(orderObj, roomName, prodName, status) {
   return Array.isArray(ids) && ids.length ? ids.map(id => norm(id)).filter(Boolean) : getProductSourceOrderIds(orderObj, prodName);
 }
 
+function renderCurrentOrderNotes(orderObj = rawData?.[currentOrder]) {
+  const card = document.getElementById('dash-notes-card');
+  const body = document.getElementById('dash-notes');
+  if (!card || !body) return;
+
+  const notes = norm(orderObj?.notes);
+  if (!notes) {
+    card.classList.add('hidden');
+    body.innerText = '';
+    return;
+  }
+
+  body.innerText = notes;
+  card.classList.remove('hidden');
+}
+
 function getPanelDamageInfo(panelData, prodData) {
   const per = Number(panelData?.qtyPerUnit) || 1;
   const qtyOrder = Number(panelData?.qtyOrder) || 0;
@@ -278,6 +294,8 @@ google.script.run
    console.log("Data Loaded", rawData);
    renderJobs();
    checkOrderBadge();
+   if (currentOrder && rawData[currentOrder]) renderCurrentOrderNotes(rawData[currentOrder]);
+   else renderCurrentOrderNotes(null);
 
   mountBreadcrumb("view-jobs");
   updateBreadcrumbsForView("view-jobs");
@@ -1151,6 +1169,7 @@ function renderWoodStockManager() {
   function openOrder(id) {
     currentOrder = id;
     document.getElementById('dash-customer').innerText = getOrderDisplayTitle(rawData[id], id);
+    renderCurrentOrderNotes(rawData[id]);
     
     // SHOW Delivery button for Clients
     const delivBtn = document.getElementById('btn-dash-deliv');
@@ -1162,6 +1181,7 @@ function renderWoodStockManager() {
   function openStockDashboard(id) {
     currentOrder = id;
     document.getElementById('dash-customer').innerText = getOrderDisplayTitle(rawData[id], id);
+    renderCurrentOrderNotes(rawData[id]);
 
     // HIDE Delivery button for Stock
     const delivBtn = document.getElementById('btn-dash-deliv');
@@ -3108,6 +3128,11 @@ function renderShopifyOrdersModal(rows) {
     const totalAllocated = lines.reduce((s, r) => s + (Number(r.allocatedFromStock) || 0), 0);
     const totalToBuild = Math.max(0, totalOrdered - totalAllocated);
 
+    const noteList = Array.from(new Set(lines.map(r => norm(r.notes)).filter(Boolean)));
+    const notesHtml = noteList.length
+      ? `<div class="alert alert-light border small text-secondary mb-3"><strong class="text-dark">Notes:</strong><div class="mt-1" style="white-space:pre-wrap;">${noteList.map(note => esc(note)).join('<hr class="my-2">')}</div></div>`
+      : "";
+
     const rowsHtml = lines.map(r => {
       const rowIndex = Number(r.rowIndex);
       const ordered = Number(r.qtyOrdered) || 0;
@@ -3191,6 +3216,7 @@ function renderShopifyOrdersModal(rows) {
              aria-labelledby="${headingId}"
              data-bs-parent="#${accordId}">
           <div class="accordion-body pt-2">
+            ${notesHtml}
             <div class="table-responsive">
               <table class="table table-hover align-middle mb-0">
                 <thead class="bg-light">

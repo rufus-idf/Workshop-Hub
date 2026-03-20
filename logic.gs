@@ -148,6 +148,48 @@ function _saveOrderMergeMap_(mergeMap) {
   return cleaned;
 }
 
+function _getShopifyOrderNotesMap_() {
+  const sh = _getShopifyOrdersSheet();
+  const values = sh.getDataRange().getValues();
+  if (!values || values.length < 2) return {};
+
+  const headers = values[0].map(h => _normTxt(h).toLowerCase());
+  const hm = _headerMap_(headers);
+  const idxOrderId = hm["order id"];
+  const idxNotes = hm["notes"];
+  if (idxOrderId == null || idxNotes == null) return {};
+
+  const notesMap = {};
+  for (let i = 1; i < values.length; i++) {
+    const orderId = _normTxt(values[i][idxOrderId]);
+    const note = squeezeSpaces_(values[i][idxNotes]);
+    if (!orderId || !note) continue;
+    if (!notesMap[orderId]) notesMap[orderId] = [];
+    if (notesMap[orderId].indexOf(note) === -1) notesMap[orderId].push(note);
+  }
+
+  return notesMap;
+}
+
+function _addOrderNoteEntries_(orderObj, orderId, notes) {
+  if (!orderObj) return;
+  const safeOrderId = squeezeSpaces_(orderId);
+  const entries = Array.isArray(notes) ? notes : [notes];
+  if (!Array.isArray(orderObj.noteEntries)) orderObj.noteEntries = [];
+
+  entries.map(v => squeezeSpaces_(v)).filter(Boolean).forEach(note => {
+    const exists = orderObj.noteEntries.some(entry => entry.orderId === safeOrderId && entry.note === note);
+    if (!exists) orderObj.noteEntries.push({ orderId: safeOrderId, note: note });
+  });
+}
+
+function _formatOrderNotes_(noteEntries) {
+  const entries = Array.isArray(noteEntries) ? noteEntries : [];
+  if (!entries.length) return "";
+  if (entries.length === 1) return entries[0].note;
+  return entries.map(entry => `Order ${entry.orderId}: ${entry.note}`).join("\n\n");
+}
+
 function _ensureTreeOrder_(tree, orderId, customer) {
   const safeOrderId = squeezeSpaces_(orderId);
   if (!safeOrderId) return null;
@@ -158,6 +200,8 @@ function _ensureTreeOrder_(tree, orderId, customer) {
       customer: customer,
       products: {},
       delivery: { bucket: {}, rooms: {} },
+      noteEntries: [],
+      notes: "",
       memberOrderIds: [safeOrderId],
       displayOrderIds: [safeOrderId],
       mergeTargetOrderId: safeOrderId,
@@ -267,6 +311,7 @@ function _decorateOrderTree_(tree) {
     const preferred = orderObj.mergeTargetOrderId || orderObj.id;
     orderObj.displayOrderIds = _addUniqueOrderIds_([], [preferred].concat(orderObj.memberOrderIds));
     orderObj.isMerged = orderObj.displayOrderIds.length > 1;
+    orderObj.notes = _formatOrderNotes_(orderObj.noteEntries);
 
     let orderRequired = 0;
     let orderManufactured = 0;
@@ -296,6 +341,7 @@ function _mergeOrderObjects_(targetOrder, sourceOrder) {
 
   targetOrder.memberOrderIds = _addUniqueOrderIds_(targetOrder.memberOrderIds, sourceOrder.memberOrderIds || [sourceOrder.id]);
   targetOrder.displayOrderIds = _addUniqueOrderIds_(targetOrder.displayOrderIds, sourceOrder.displayOrderIds || [sourceOrder.id]);
+  targetOrder.noteEntries = (targetOrder.noteEntries || []).concat(sourceOrder.noteEntries || []);
 
   Object.keys(sourceOrder.products || {}).forEach(prodName => {
     const ensured = _ensureTreeProduct_(targetOrder, prodName, sourceOrder.id);
@@ -387,6 +433,7 @@ function _buildDataTree_(applyCustomMerges) {
   }
 
   const tree = {};
+  const notesMap = _getShopifyOrderNotesMap_();
   const norm = v => String(v ?? "").replace(/ /g, " ").trim();
 
   panelData.forEach((row, index) => {
@@ -397,6 +444,7 @@ function _buildDataTree_(applyCustomMerges) {
     if (!product) product = norm(row[3] || "Unknown Product");
 
     const orderObj = _ensureTreeOrder_(tree, orderId, customer);
+    _addOrderNoteEntries_(orderObj, orderId, notesMap[orderId]);
     const ensured = _ensureTreeProduct_(orderObj, product, orderId);
 
     ensured.value.panels.push({
@@ -420,6 +468,7 @@ function _buildDataTree_(applyCustomMerges) {
     if (!product) product = norm(row[3] || "Unknown Product");
 
     const orderObj = _ensureTreeOrder_(tree, orderId, row[1]);
+    _addOrderNoteEntries_(orderObj, orderId, notesMap[orderId]);
     const ensured = _ensureTreeProduct_(orderObj, product, orderId);
 
     ensured.value.components.push({
@@ -445,6 +494,7 @@ function _buildDataTree_(applyCustomMerges) {
     if (!orderId) return;
 
     const orderObj = _ensureTreeOrder_(tree, orderId, row[1]);
+    _addOrderNoteEntries_(orderObj, orderId, notesMap[orderId]);
     _ensureTreeProduct_(orderObj, product, orderId);
 
     if (room === "") {
@@ -1071,6 +1121,7 @@ function getPendingShopifyOrdersWithStock() {
   const idxSku = hm["product code"];
   const idxQty = hm["quantity ordered"];
   const idxStatus = hm["import status"];
+  const idxNotes = hm["notes"];
 
   if ([idxOrderId, idxCustomer, idxProductName, idxSku, idxQty, idxStatus].some(x => x == null)) {
     throw new Error("Shopify Orders headers don't match expected names. Check spelling/case.");
@@ -1086,6 +1137,7 @@ function getPendingShopifyOrdersWithStock() {
     const sku = _normTxt(values[r][idxSku]);
     const qtyOrdered = Number(values[r][idxQty]) || 0;
     const status = _normTxt(values[r][idxStatus]);
+    const notes = idxNotes == null ? "" : squeezeSpaces_(values[r][idxNotes]);
 
     if (!orderId || !sku || qtyOrdered <= 0) continue;
 
@@ -1109,6 +1161,7 @@ function getPendingShopifyOrdersWithStock() {
       sku,
       qtyOrdered,
       importStatus: status,
+      notes,
       allocatedFromStock: allocated,
       remainingToAllocate,
       availableInStock: avail,
@@ -1164,6 +1217,7 @@ function getSmartOrderSummary(orderId) {
   const idxSku = hm["product code"];
   const idxQty = hm["quantity ordered"];
   const idxStatus = hm["import status"];
+  const idxNotes = hm["notes"];
 
   if ([idxOrderId, idxCustomer, idxProductName, idxSku, idxQty, idxStatus].some(x => x == null)) {
     throw new Error("Shopify Orders headers don't match expected names. Check spelling/case.");
