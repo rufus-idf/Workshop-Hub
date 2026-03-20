@@ -2496,53 +2496,96 @@ function adjustComponentStock(rowIndex, change, reason) {
 
 
 
-// 3. ALLOCATE WOOD (Updated for Summary Log)
-function allocateWood(rowIndex, qtyUsed, projectId, productName, offcutData) {
+function allocateExternalOffcut_(itemKey, qtyUsed, projectId, productName) {
+  const offcutId = String(itemKey || '').replace(/^offcut:/i, '').trim();
+  if (!offcutId) throw new Error("Invalid offcut id.");
+
+  const extSs = SpreadsheetApp.openById(OFFCUT_SHEET_ID);
+  const inventorySheet = extSs.getSheetByName(OFFCUT_INVENTORY_TAB_NAME);
+  if (!inventorySheet || inventorySheet.getLastRow() < 2) throw new Error("External offcut inventory tab missing.");
+
+  const data = inventorySheet.getDataRange().getValues();
+  const map = getHeaderIndexMap_(data[0]);
+
+  let rowIndex = -1;
+  let row = null;
+  for (let i = 1; i < data.length; i++) {
+    const candidateId = squeezeSpaces_(getRowValueByHeaders_(data[i], map, "offcut_id"));
+    if (candidateId === offcutId) {
+      rowIndex = i + 1;
+      row = data[i];
+      break;
+    }
+  }
+
+  if (!rowIndex || !row) throw new Error("Offcut not found in external inventory.");
+
+  const qtyColIndex = (map["qty"] ?? -1) + 1;
+  const statusColIndex = (map["status"] ?? -1) + 1;
+  if (qtyColIndex <= 0) throw new Error("External offcut inventory is missing a qty column.");
+
+  const currentQty = Number(getRowValueByHeaders_(row, map, "qty")) || 0;
+  if (qtyUsed > currentQty) throw new Error("Insufficient offcut stock.");
+
+  const materialName = squeezeSpaces_(getRowValueByHeaders_(row, map, "material"));
+  const bboxW = Number(getRowValueByHeaders_(row, map, "bbox_w_mm")) || 0;
+  const bboxH = Number(getRowValueByHeaders_(row, map, "bbox_h_mm")) || 0;
+  const lengthMm = Math.max(bboxW, bboxH);
+  const widthMm = Math.min(bboxW, bboxH);
+  const newQty = currentQty - qtyUsed;
+
+  inventorySheet.getRange(rowIndex, qtyColIndex).setValue(newQty);
+  if (statusColIndex > 0) {
+    inventorySheet.getRange(rowIndex, statusColIndex).setValue(newQty > 0 ? "IN_STOCK" : "DEPLETED");
+  }
+
+  const historyMaterialName = `Offcut ${offcutId}: ${materialName} - ${lengthMm} x ${widthMm}`;
+  const historyReason = `CNC Job: #${projectId} (${productName})`;
+  logStockTransaction(historyMaterialName, -qtyUsed, historyReason);
+  updateProjectUsageSummary(projectId, productName, materialName, qtyUsed);
+
+  return "Success";
+}
+
+function allocateWoodSheet_(rowIndex, qtyUsed, projectId, productName) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const stockSheet = ss.getSheetByName("Wood Stock");
-  
   if (!stockSheet) throw new Error("Wood Stock tab missing");
 
-  // 1. DEDUCT STOCK (Physical Inventory)
-  const currentQty = stockSheet.getRange(rowIndex, 6).getValue(); // Col F = Qty in Stock
+  const currentQty = stockSheet.getRange(rowIndex, 6).getValue();
   const newQty = (Number(currentQty) || 0) - Number(qtyUsed);
   if (newQty < 0) throw new Error("Insufficient stock.");
   stockSheet.getRange(rowIndex, 6).setValue(newQty);
 
-  // 2. LOG HISTORY (The "Book" Icon - Transactional)
-  const materialName = stockSheet.getRange(rowIndex, 1).getValue(); // Col A
-  const stockType = String(stockSheet.getRange(rowIndex, 2).getValue() || '').trim().toLowerCase(); // Col B = Type
-  const offcutLength = Number(stockSheet.getRange(rowIndex, 3).getValue()) || 0; // Col C = Length
-  const offcutWidth = Number(stockSheet.getRange(rowIndex, 4).getValue()) || 0; // Col D = Width
-  const isOffcutAllocation = stockType === 'offcut' && offcutLength > 0 && offcutWidth > 0;
-
-  const historyMaterialName = isOffcutAllocation
-    ? `Offcut: ${materialName} - ${offcutLength} x ${offcutWidth}`
-    : materialName;
-
-  let historyReason = `CNC Job: #${projectId} (${productName})`;
-  if(offcutData) historyReason += " [Offcut Generated]";
-  
-  // This goes to 'Stock History' tab
-  logStockTransaction(historyMaterialName, -qtyUsed, historyReason);
-
-  // 3. UPDATE PROJECT SUMMARY (The "Wood Usage Log" Tab)
-  // This aggregates the totals nicely
+  const materialName = stockSheet.getRange(rowIndex, 1).getValue();
+  const historyReason = `CNC Job: #${projectId} (${productName})`;
+  logStockTransaction(materialName, -qtyUsed, historyReason);
   updateProjectUsageSummary(projectId, productName, materialName, qtyUsed);
 
-  // 4. CREATE OFFCUT (Physical Inventory)
-  if (offcutData) {
-    stockSheet.appendRow([
-      materialName,        // A: Material
-      "Offcut",            // B: Type
-      offcutData.length,   // C: Length
-      offcutData.width,    // D: Width
-      0,                   // E: Qty on Order
-      offcutData.qty       // f: Qty
-    ]);
-  }
-  
   return "Success";
+}
+
+// 3. ALLOCATE WOOD / OFFCUTS
+function allocateWood(itemKey, qtyUsed, projectId, productName) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    const qty = Math.floor(Number(qtyUsed) || 0);
+    if (qty <= 0) throw new Error("Quantity must be at least 1.");
+
+    const key = String(itemKey || "").trim();
+    if (!key) throw new Error("Missing stock item key.");
+
+    if (/^offcut:/i.test(key)) {
+      return allocateExternalOffcut_(key, qty, projectId, productName);
+    }
+
+    const rowIndex = Number(key);
+    if (!rowIndex) throw new Error("Invalid wood stock row.");
+    return allocateWoodSheet_(rowIndex, qty, projectId, productName);
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function adjustWoodOnOrder(rowIndex, change) {

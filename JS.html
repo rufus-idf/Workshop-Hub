@@ -243,6 +243,23 @@ function getOffcutItemId(item) {
   return String(item?.externalOffcutId || item?.offcutId || item?.rowIndex || '').trim();
 }
 
+function escapeInlineArg(value) {
+  return String(value ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+function findWoodItemByKey(itemKey) {
+  const targetKey = String(itemKey ?? '').trim();
+  if (!targetKey) return null;
+
+  const collections = [stockData?.wood || [], cncWoodViewData || []];
+  for (const collection of collections) {
+    const match = (Array.isArray(collection) ? collection : []).find(item => String(item?.rowIndex ?? '').trim() === targetKey);
+    if (match) return match;
+  }
+
+  return null;
+}
+
 function findOffcutItemById(offcutId) {
   const targetId = String(offcutId || '').trim();
   if (!targetId) return null;
@@ -492,7 +509,14 @@ function buildOffcutTable(rows, viewKey) {
 
   filteredRows.forEach(item => {
     const offcutId = getOffcutItemId(item);
-    const offcutIdArg = offcutId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const offcutIdArg = escapeInlineArg(offcutId);
+    const actionBtns = viewKey === 'cnc'
+      ? `
+          <div class="d-flex justify-content-end gap-2">
+            <button class="btn btn-outline-dark btn-sm rounded-pill px-3" onclick="openOffcutPreview('${offcutIdArg}')">Preview</button>
+            <button class="btn btn-dark btn-sm rounded-pill px-3 fw-bold" onclick="openAllocateModal('${escapeInlineArg(item.rowIndex)}')">Allocate</button>
+          </div>`
+      : `<button class="btn btn-outline-dark btn-sm rounded-pill px-3" onclick="openOffcutPreview('${offcutIdArg}')">Preview</button>`;
     html += `
       <tr class="wood-row">
         <td class="ps-3 fw-bold text-dark">${escHtml(item.externalOffcutId || item.offcutId || item.rowIndex || "-")}</td>
@@ -503,7 +527,7 @@ function buildOffcutTable(rows, viewKey) {
         <td class="text-center fw-bold">${fmtNum(item.qty, 0)}</td>
         <td>${formatOffcutArea(item.areaM2)}</td>
         <td class="text-end pe-3">
-          <button class="btn btn-outline-dark btn-sm rounded-pill px-3" onclick="openOffcutPreview('${offcutIdArg}')">Preview</button>
+          ${actionBtns}
         </td>
       </tr>`;
   });
@@ -2771,7 +2795,7 @@ function openCNCNester() {
 
       let actionBtn = '';
       if (context === 'cnc') {
-        actionBtn = `<button class="btn btn-dark btn-sm rounded-pill px-3 fw-bold" onclick="openAllocateModal(${item.rowIndex})">ALLOCATE</button>`;
+        actionBtn = `<button class="btn btn-dark btn-sm rounded-pill px-3 fw-bold" onclick="openAllocateModal('${escapeInlineArg(item.rowIndex)}')">ALLOCATE</button>`;
       } else {
         actionBtn = `
           <div class="d-flex justify-content-end gap-2">
@@ -2935,21 +2959,16 @@ updateBreadcrumbsForView("view-cnc");
   let currentAllocItem = null;
 
   function openAllocateModal(rowIndex) {
+      const rowKey = String(rowIndex ?? '').trim();
       // 1. Find the item data
-      const item = stockData.wood.find(w => w.rowIndex === rowIndex);
+      const item = findWoodItemByKey(rowKey);
       if (!item) return;
       currentAllocItem = item;
 
       // 2. Populate UI
       document.getElementById('alloc-material-name').innerText = `${item.type}: ${item.material} (${item.size})`;
-      document.getElementById('alloc-row-index').value = rowIndex;
+      document.getElementById('alloc-row-index').value = rowKey;
       document.getElementById('alloc-qty').value = 1;
-      
-      // Reset Offcut fields
-      document.getElementById('alloc-log-offcut').checked = false;
-      document.getElementById('alloc-offcut-fields').classList.add('hidden');
-      document.getElementById('off-len').value = '';
-      document.getElementById('off-wid').value = '';
 
       // 3. Use current order only
       const orderLabel = document.getElementById('alloc-project-name');
@@ -2964,12 +2983,23 @@ updateBreadcrumbsForView("view-cnc");
           if (orderLabel) orderLabel.innerText = getOrderDisplayTitle(rawData[currentOrder], currentOrder);
 
           const products = rawData[currentOrder].products || {};
-          for (const prodName in products) {
+          const matchingProductNames = Object.keys(products).filter(prodName => {
+              const panels = Array.isArray(products[prodName]?.panels) ? products[prodName].panels : [];
+              const itemMaterial = String(item.material || '').trim().toLowerCase();
+              return panels.some(panel => {
+                  const panelMaterial = String(panel?.material || '').trim().toLowerCase();
+                  return panelMaterial && itemMaterial && (panelMaterial.includes(itemMaterial) || itemMaterial.includes(panelMaterial));
+              });
+          });
+
+          const productNamesToShow = matchingProductNames.length ? matchingProductNames : Object.keys(products);
+
+          for (const prodName of productNamesToShow) {
               const opt = document.createElement('option');
               opt.value = prodName;
               opt.text = prodName;
               prodSelect.appendChild(opt);
-          }
+	  }
 
           wrap.classList.toggle('hidden', prodSelect.options.length === 0);
       }
@@ -2988,30 +3018,16 @@ updateBreadcrumbsForView("view-cnc");
       el.value = val;
   }
 
-  function toggleOffcutFields() {
-      const isChecked = document.getElementById('alloc-log-offcut').checked;
-      document.getElementById('alloc-offcut-fields').classList.toggle('hidden', !isChecked);
-  }
-
   function confirmAllocation() {
-      const rowIndex = parseInt(document.getElementById('alloc-row-index').value);
+      const rowIndex = String(document.getElementById('alloc-row-index').value || '').trim();
       const project = currentOrder;
       const product = document.getElementById('alloc-product-select').value;
       const qtyUsed = parseInt(document.getElementById('alloc-qty').value);
       
       if (!project) { alert("No active order selected."); return; }
       if (!product) { alert("Please select a Product."); return; }
-      
-      // Offcut Data
-      let offcuts = null;
-      if (document.getElementById('alloc-log-offcut').checked) {
-          const len = document.getElementById('off-len').value;
-          const wid = document.getElementById('off-wid').value;
-          const qty = document.getElementById('off-qty').value;
-          
-          if (!len || !wid) { alert("Please enter Offcut dimensions."); return; }
-          offcuts = { length: len, width: wid, qty: parseInt(qty) || 1 };
-      }
+      if (!rowIndex) { alert("No stock item selected."); return; }
+      if (!qtyUsed || qtyUsed < 1) { alert("Please enter a valid quantity."); return; }
 
       // Close Modal
       const modalEl = document.getElementById('allocateModal');
@@ -3022,17 +3038,17 @@ updateBreadcrumbsForView("view-cnc");
 
       // Send to Backend
       google.script.run
-  .withSuccessHandler(() => {
-    showStatus("Allocated!", true);
+	  .withSuccessHandler(() => {
+	    showStatus("Allocated!", true);
 
     // open the cutting picker immediately
     openCncCutModal(project, product);
 
     // (optional) refresh stock list like you already do
     google.script.run.withSuccessHandler(d => { stockData = d; filterStockByJob(); }).getInventoryData();
-  })
-  .withFailureHandler(err => { alert("Error: " + err); showStatus("Error", false); })
-  .allocateWood(rowIndex, qtyUsed, project, product, offcuts);
+	  })
+	  .withFailureHandler(err => { alert("Error: " + err); showStatus("Error", false); })
+	  .allocateWood(rowIndex, qtyUsed, project, product);
 
   }
 

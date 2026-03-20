@@ -703,31 +703,6 @@
                 <input type="number" id="alloc-qty" class="form-control text-center mx-2 fw-bold" value="1" style="max-width:80px;">
                 <button class="btn btn-outline-secondary" onclick="stepAllocQty(1)">+</button>
             </div>
-
-            <hr>
-
-            <div class="form-check form-switch mb-3">
-                <input class="form-check-input" type="checkbox" id="alloc-log-offcut" onchange="toggleOffcutFields()">
-                <label class="form-check-label fw-bold" for="alloc-log-offcut">Generate Offcut?</label>
-            </div>
-
-            <div id="alloc-offcut-fields" class="hidden bg-light p-3 rounded">
-                <div class="row g-2">
-                    <div class="col-6">
-                        <small>Length (mm)</small>
-                        <input type="number" id="off-len" class="form-control" placeholder="L">
-                    </div>
-                    <div class="col-6">
-                        <small>Width (mm)</small>
-                        <input type="number" id="off-wid" class="form-control" placeholder="W">
-                    </div>
-                    <div class="col-12 mt-2">
-                        <small>Quantity Created</small>
-                        <input type="number" id="off-qty" class="form-control" value="1">
-                    </div>
-                </div>
-            </div>
-
         </div>
 
         <div class="modal-footer border-0">
