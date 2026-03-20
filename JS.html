@@ -239,6 +239,151 @@ function setOffcutSort(viewKey, value) {
   rerenderOffcutView(viewKey);
 }
 
+function getOffcutItemId(item) {
+  return String(item?.externalOffcutId || item?.offcutId || item?.rowIndex || '').trim();
+}
+
+function findOffcutItemById(offcutId) {
+  const targetId = String(offcutId || '').trim();
+  if (!targetId) return null;
+
+  const collections = [stockData?.wood || [], cncWoodViewData || []];
+  for (const collection of collections) {
+    const match = (Array.isArray(collection) ? collection : []).find(item => {
+      const type = String(item?.type || '').toLowerCase();
+      return type.includes('offcut') && getOffcutItemId(item) === targetId;
+    });
+    if (match) return match;
+  }
+
+  return null;
+}
+
+function normalizeOffcutPoints(points) {
+  if (!Array.isArray(points)) return [];
+  return points
+    .map(point => Array.isArray(point) ? point : [])
+    .filter(point => point.length >= 2 && Number.isFinite(Number(point[0])) && Number.isFinite(Number(point[1])))
+    .map(point => ({ x: Number(point[0]), y: Number(point[1]) }));
+}
+
+function getPolygonSignedArea(points) {
+  if (!Array.isArray(points) || points.length < 3) return 0;
+  let total = 0;
+  for (let i = 0; i < points.length; i++) {
+    const current = points[i];
+    const next = points[(i + 1) % points.length];
+    total += (current.x * next.y) - (next.x * current.y);
+  }
+  return total / 2;
+}
+
+function buildSvgPath(points) {
+  if (!Array.isArray(points) || !points.length) return '';
+  const commands = points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`);
+  return `${commands.join(' ')} Z`;
+}
+
+function formatEdgeLengthMm(length) {
+  return `${(Number(length) || 0).toFixed(1)}`;
+}
+
+function buildOffcutPreviewMarkup(offcut) {
+  const outline = normalizeOffcutPoints(offcut?.verticesJson);
+  if (outline.length < 3) {
+    return `<div class="text-center text-muted py-4">No valid shape geometry was found for this offcut.</div>`;
+  }
+
+  const holesRaw = Array.isArray(offcut?.holesJson) ? offcut.holesJson : [];
+  const holes = holesRaw.map(normalizeOffcutPoints).filter(points => points.length >= 3);
+
+  const allPoints = outline.concat(...holes);
+  const minX = Math.min(...allPoints.map(point => point.x));
+  const minY = Math.min(...allPoints.map(point => point.y));
+  const maxX = Math.max(...allPoints.map(point => point.x));
+  const maxY = Math.max(...allPoints.map(point => point.y));
+  const rawWidth = Math.max(1, maxX - minX);
+  const rawHeight = Math.max(1, maxY - minY);
+
+  const canvasWidth = 920;
+  const canvasHeight = 620;
+  const padding = 80;
+  const scale = Math.min(
+    (canvasWidth - (padding * 2)) / rawWidth,
+    (canvasHeight - (padding * 2)) / rawHeight
+  );
+
+  const transformPoint = (point) => ({
+    x: ((point.x - minX) * scale) + padding,
+    y: ((point.y - minY) * scale) + padding
+  });
+
+  const outlineSvg = outline.map(transformPoint);
+  const holesSvg = holes.map(points => points.map(transformPoint));
+  const signedArea = getPolygonSignedArea(outlineSvg);
+  const outwardFactor = signedArea >= 0 ? 1 : -1;
+
+  const labelGroups = outlineSvg.map((point, index) => {
+    const next = outlineSvg[(index + 1) % outlineSvg.length];
+    const dx = next.x - point.x;
+    const dy = next.y - point.y;
+    const lengthPx = Math.hypot(dx, dy);
+    const lengthMm = Math.hypot(outline[index + 1 === outline.length ? 0 : index + 1].x - outline[index].x, outline[index + 1 === outline.length ? 0 : index + 1].y - outline[index].y);
+    if (!lengthPx) return '';
+
+    const midX = (point.x + next.x) / 2;
+    const midY = (point.y + next.y) / 2;
+    const normalX = (dy / lengthPx) * 24 * outwardFactor;
+    const normalY = (-dx / lengthPx) * 24 * outwardFactor;
+    const labelX = midX + normalX;
+    const labelY = midY + normalY;
+    const text = formatEdgeLengthMm(lengthMm);
+    const rectWidth = Math.max(44, (text.length * 10) + 14);
+    const rectHeight = 28;
+
+    return `
+      <g>
+        <rect x="${(labelX - (rectWidth / 2)).toFixed(2)}" y="${(labelY - 18).toFixed(2)}" width="${rectWidth}" height="${rectHeight}" rx="6" fill="rgba(255,255,255,0.92)"></rect>
+        <text x="${labelX.toFixed(2)}" y="${labelY.toFixed(2)}" text-anchor="middle" dominant-baseline="middle" font-size="16" font-weight="600" fill="#1f2937">${escHtml(text)}</text>
+      </g>`;
+  }).join('');
+
+  const compoundPath = [
+    buildSvgPath(outlineSvg),
+    ...holesSvg.map(buildSvgPath)
+  ].filter(Boolean).join(' ');
+
+  return `
+    <div class="text-center small text-muted mb-3">Edge lengths shown in mm.</div>
+    <div class="border rounded bg-light-subtle p-2">
+      <svg viewBox="0 0 ${canvasWidth} ${canvasHeight}" class="w-100" role="img" aria-label="Offcut shape preview">
+        <path d="${compoundPath}"
+              fill="rgba(116, 170, 198, 0.55)"
+              stroke="#1f5a82"
+              stroke-width="5"
+              fill-rule="evenodd"></path>
+        ${labelGroups}
+      </svg>
+    </div>`;
+}
+
+function openOffcutPreview(offcutId) {
+  const offcut = findOffcutItemById(offcutId);
+  if (!offcut) {
+    alert('Could not find this offcut preview. Try refreshing the page.');
+    return;
+  }
+
+  const modalEl = document.getElementById('offcutPreviewModal');
+  const titleEl = document.getElementById('offcut-preview-title');
+  const bodyEl = document.getElementById('offcut-preview-body');
+  if (!modalEl || !titleEl || !bodyEl) return;
+
+  titleEl.innerText = getOffcutItemId(offcut) || 'Offcut Preview';
+  bodyEl.innerHTML = buildOffcutPreviewMarkup(offcut);
+  new bootstrap.Modal(modalEl).show();
+}
+
 function buildOffcutTable(rows, viewKey) {
   const safeRows = Array.isArray(rows) ? rows.slice() : [];
   const state = getOffcutViewState(viewKey);
@@ -313,7 +458,8 @@ function buildOffcutTable(rows, viewKey) {
             <th>Length</th>
             <th>Width</th>
             <th class="text-center">Qty</th>
-            <th class="pe-3">Area (m²)</th>
+            <th>Area (m²)</th>
+            <th class="text-end pe-3">Action</th>
           </tr>
         </thead>
         <tbody>`;
@@ -321,11 +467,13 @@ function buildOffcutTable(rows, viewKey) {
   if (!filteredRows.length) {
     html += `
       <tr>
-        <td colspan="7" class="text-center text-muted py-4">No offcuts found.</td>
+        <td colspan="8" class="text-center text-muted py-4">No offcuts found.</td>
       </tr>`;
   }
 
   filteredRows.forEach(item => {
+    const offcutId = getOffcutItemId(item);
+    const offcutIdArg = offcutId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     html += `
       <tr class="wood-row">
         <td class="ps-3 fw-bold text-dark">${escHtml(item.externalOffcutId || item.offcutId || item.rowIndex || "-")}</td>
@@ -334,7 +482,10 @@ function buildOffcutTable(rows, viewKey) {
         <td style="font-family:monospace;">${formatOffcutMm(item.length)}</td>
         <td style="font-family:monospace;">${formatOffcutMm(item.width)}</td>
         <td class="text-center fw-bold">${fmtNum(item.qty, 0)}</td>
-        <td class="pe-3">${formatOffcutArea(item.areaM2)}</td>
+        <td>${formatOffcutArea(item.areaM2)}</td>
+        <td class="text-end pe-3">
+          <button class="btn btn-outline-dark btn-sm rounded-pill px-3" onclick="openOffcutPreview('${offcutIdArg}')">Preview</button>
+        </td>
       </tr>`;
   });
 
