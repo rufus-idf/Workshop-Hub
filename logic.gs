@@ -83,118 +83,449 @@ function _getFurnitureStockSheet_(createIfMissing) {
 
 
 // 2. FETCH HIERARCHY DATA (Safe Version)
+const ORDER_MERGE_PROP_KEY = "WORKSHOP_HUB_ORDER_MERGES_V1";
 
+function _getOrderIdArray_(orderIdsOrId) {
+  const raw = Array.isArray(orderIdsOrId) ? orderIdsOrId : [orderIdsOrId];
+  const seen = {};
+  return raw
+    .map(v => squeezeSpaces_(v))
+    .filter(v => {
+      if (!v || seen[v]) return false;
+      seen[v] = true;
+      return true;
+    });
+}
 
-function getDataTree() {
+function _loadOrderMergeMap_() {
+  const props = PropertiesService.getDocumentProperties();
+  const raw = props.getProperty(ORDER_MERGE_PROP_KEY);
+  if (!raw) return {};
+
+  try {
+    return JSON.parse(raw) || {};
+  } catch (err) {
+    console.warn("Invalid order merge map. Resetting.", err);
+    return {};
+  }
+}
+
+function _resolveOrderMergeRoot_(orderId, mergeMap) {
+  let current = squeezeSpaces_(orderId);
+  const seen = {};
+
+  while (current && mergeMap[current] && !seen[current]) {
+    seen[current] = true;
+    current = squeezeSpaces_(mergeMap[current]);
+  }
+
+  return current;
+}
+
+function _normalizeOrderMergeMap_(mergeMap) {
+  const rawMap = mergeMap || {};
+  const cleaned = {};
+
+  Object.keys(rawMap).forEach(sourceId => {
+    const source = squeezeSpaces_(sourceId);
+    const target = squeezeSpaces_(rawMap[sourceId]);
+    if (!source || !target || source === target) return;
+    cleaned[source] = target;
+  });
+
+  Object.keys(cleaned).forEach(sourceId => {
+    const root = _resolveOrderMergeRoot_(cleaned[sourceId], cleaned);
+    if (!root || root === sourceId) delete cleaned[sourceId];
+    else cleaned[sourceId] = root;
+  });
+
+  return cleaned;
+}
+
+function _saveOrderMergeMap_(mergeMap) {
+  const cleaned = _normalizeOrderMergeMap_(mergeMap);
+  PropertiesService.getDocumentProperties().setProperty(ORDER_MERGE_PROP_KEY, JSON.stringify(cleaned));
+  return cleaned;
+}
+
+function _getShopifyOrderNotesMap_() {
+  const sh = _getShopifyOrdersSheet();
+  const values = sh.getDataRange().getValues();
+  if (!values || values.length < 2) return {};
+
+  const headers = values[0].map(h => _normTxt(h).toLowerCase());
+  const hm = _headerMap_(headers);
+  const idxOrderId = hm["order id"];
+  const idxNotes = hm["notes"];
+  if (idxOrderId == null || idxNotes == null) return {};
+
+  const notesMap = {};
+  for (let i = 1; i < values.length; i++) {
+    const orderId = _normTxt(values[i][idxOrderId]);
+    const note = squeezeSpaces_(values[i][idxNotes]);
+    if (!orderId || !note) continue;
+    if (!notesMap[orderId]) notesMap[orderId] = [];
+    if (notesMap[orderId].indexOf(note) === -1) notesMap[orderId].push(note);
+  }
+
+  return notesMap;
+}
+
+function _addOrderNoteEntries_(orderObj, orderId, notes) {
+  if (!orderObj) return;
+  const safeOrderId = squeezeSpaces_(orderId);
+  const entries = Array.isArray(notes) ? notes : [notes];
+  if (!Array.isArray(orderObj.noteEntries)) orderObj.noteEntries = [];
+
+  entries.map(v => squeezeSpaces_(v)).filter(Boolean).forEach(note => {
+    const exists = orderObj.noteEntries.some(entry => entry.orderId === safeOrderId && entry.note === note);
+    if (!exists) orderObj.noteEntries.push({ orderId: safeOrderId, note: note });
+  });
+}
+
+function _formatOrderNotes_(noteEntries) {
+  const entries = Array.isArray(noteEntries) ? noteEntries : [];
+  if (!entries.length) return "";
+  if (entries.length === 1) return entries[0].note;
+  return entries.map(entry => `Order ${entry.orderId}: ${entry.note}`).join("\n\n");
+}
+
+function _ensureTreeOrder_(tree, orderId, customer) {
+  const safeOrderId = squeezeSpaces_(orderId);
+  if (!safeOrderId) return null;
+
+  if (!tree[safeOrderId]) {
+    tree[safeOrderId] = {
+      id: safeOrderId,
+      customer: customer,
+      products: {},
+      delivery: { bucket: {}, rooms: {} },
+      noteEntries: [],
+      notes: "",
+      memberOrderIds: [safeOrderId],
+      displayOrderIds: [safeOrderId],
+      mergeTargetOrderId: safeOrderId,
+      isMerged: false
+    };
+  }
+
+  if (!tree[safeOrderId].customer && customer) tree[safeOrderId].customer = customer;
+  return tree[safeOrderId];
+}
+
+function _ensureTreeProduct_(orderObj, productName, sourceOrderId) {
+  const safeProduct = squeezeSpaces_(productName) || "Unknown Product";
+  if (!orderObj.products[safeProduct]) {
+    orderObj.products[safeProduct] = { panels: [], components: [], sourceOrderIds: [] };
+  }
+
+  const prod = orderObj.products[safeProduct];
+  const safeSource = squeezeSpaces_(sourceOrderId);
+  if (safeSource && prod.sourceOrderIds.indexOf(safeSource) === -1) prod.sourceOrderIds.push(safeSource);
+  return { key: safeProduct, value: prod };
+}
+
+function _addUniqueOrderIds_(target, ids) {
+  const nextIds = _getOrderIdArray_(ids);
+  target = Array.isArray(target) ? target : [];
+  nextIds.forEach(id => {
+    if (target.indexOf(id) === -1) target.push(id);
+  });
+  return target;
+}
+
+function _getDeliveryTotalsForOrderProduct_(orderObj, prodName) {
+  const safeProd = squeezeSpaces_(prodName);
+  const del = (orderObj && orderObj.delivery) ? orderObj.delivery : { bucket: {}, rooms: {} };
+  let total = 0;
+  let delivered = 0;
+  let fitted = 0;
+
+  if (del.bucket && del.bucket[safeProd]) total += Number(del.bucket[safeProd].qty) || 0;
+
+  Object.keys(del.rooms || {}).forEach(room => {
+    (del.rooms[room] || []).forEach(item => {
+      if (squeezeSpaces_(item.name) !== safeProd) return;
+      const qty = Number(item.qty) || 0;
+      total += qty;
+      if (item.status === "Delivered" || item.status === "Fitted") delivered += qty;
+      if (item.status === "Fitted") fitted += qty;
+    });
+  });
+
+  return { total: total, delivered: delivered, fitted: fitted };
+}
+
+function _getRequiredUnitsForProduct_(prodData, deliveryTotal) {
+  if ((Number(deliveryTotal) || 0) > 0) return Number(deliveryTotal) || 0;
+
+  let maxUnits = 0;
+  (prodData && prodData.panels ? prodData.panels : []).forEach(panel => {
+    const per = Number(panel.qtyPerUnit) || 1;
+    const qtyOrder = Number(panel.qtyOrder) || 0;
+    const units = per ? Math.round(qtyOrder / per) : 0;
+    if (units > maxUnits) maxUnits = units;
+  });
+
+  return maxUnits;
+}
+
+function _getManufacturedUnitsForProduct_(prodData) {
+  const panelTotals = {};
+  let panelUnits = Infinity;
+
+  (prodData && prodData.panels ? prodData.panels : []).forEach(panel => {
+    const key = String(panel.panelName || "");
+    const per = Number(panel.qtyPerUnit) || 1;
+    const packed = Number(panel.qtyPacked) || 0;
+    if (!panelTotals[key]) panelTotals[key] = { packed: 0, per: per };
+    panelTotals[key].packed += packed;
+  });
+
+  Object.keys(panelTotals).forEach(key => {
+    const entry = panelTotals[key];
+    const sets = Math.floor((Number(entry.packed) || 0) / (Number(entry.per) || 1));
+    if (sets < panelUnits) panelUnits = sets;
+  });
+  if (panelUnits === Infinity) panelUnits = 0;
+
+  let compUnits = Infinity;
+  (prodData && prodData.components ? prodData.components : []).forEach(comp => {
+    const per = Number(comp.qtyPerUnit) || 1;
+    const packed = Number(comp.qtyPacked) || 0;
+    const sets = Math.floor(packed / per);
+    if (sets < compUnits) compUnits = sets;
+  });
+  if (compUnits === Infinity) compUnits = 999999;
+
+  return Math.min(panelUnits, compUnits);
+}
+
+function _decorateOrderTree_(tree) {
+  Object.keys(tree).forEach(orderId => {
+    const orderObj = tree[orderId];
+    orderObj.id = squeezeSpaces_(orderObj.id || orderId);
+    orderObj.mergeTargetOrderId = squeezeSpaces_(orderObj.mergeTargetOrderId || orderObj.id || orderId);
+    orderObj.memberOrderIds = _addUniqueOrderIds_([], orderObj.memberOrderIds && orderObj.memberOrderIds.length ? orderObj.memberOrderIds : [orderObj.id]);
+
+    const preferred = orderObj.mergeTargetOrderId || orderObj.id;
+    orderObj.displayOrderIds = _addUniqueOrderIds_([], [preferred].concat(orderObj.memberOrderIds));
+    orderObj.isMerged = orderObj.displayOrderIds.length > 1;
+    orderObj.notes = _formatOrderNotes_(orderObj.noteEntries);
+
+    let orderRequired = 0;
+    let orderManufactured = 0;
+    let orderFitted = 0;
+
+    Object.keys(orderObj.products || {}).forEach(prodName => {
+      const prodData = orderObj.products[prodName] || { panels: [], components: [] };
+      prodData.sourceOrderIds = _addUniqueOrderIds_([], prodData.sourceOrderIds && prodData.sourceOrderIds.length ? prodData.sourceOrderIds : [orderObj.id]);
+      const delivery = _getDeliveryTotalsForOrderProduct_(orderObj, prodName);
+      const required = _getRequiredUnitsForProduct_(prodData, delivery.total);
+      const manufactured = Math.min(_getManufacturedUnitsForProduct_(prodData), required);
+      orderRequired += required;
+      orderManufactured += manufactured;
+      orderFitted += Math.min(delivery.fitted || 0, required);
+    });
+
+    const isWorkshop = squeezeSpaces_(orderObj.customer).toLowerCase() === "workshop stock";
+    orderObj.isWorkshop = isWorkshop;
+    orderObj.isComplete = orderRequired > 0 ? (isWorkshop ? orderManufactured >= orderRequired : orderFitted >= orderRequired) : false;
+  });
+
+  return tree;
+}
+
+function _mergeOrderObjects_(targetOrder, sourceOrder) {
+  if (!targetOrder || !sourceOrder) return targetOrder;
+
+  targetOrder.memberOrderIds = _addUniqueOrderIds_(targetOrder.memberOrderIds, sourceOrder.memberOrderIds || [sourceOrder.id]);
+  targetOrder.displayOrderIds = _addUniqueOrderIds_(targetOrder.displayOrderIds, sourceOrder.displayOrderIds || [sourceOrder.id]);
+  targetOrder.noteEntries = (targetOrder.noteEntries || []).concat(sourceOrder.noteEntries || []);
+
+  Object.keys(sourceOrder.products || {}).forEach(prodName => {
+    const ensured = _ensureTreeProduct_(targetOrder, prodName, sourceOrder.id);
+    const targetProd = ensured.value;
+    const sourceProd = sourceOrder.products[prodName] || { panels: [], components: [], sourceOrderIds: [] };
+    targetProd.sourceOrderIds = _addUniqueOrderIds_(targetProd.sourceOrderIds, sourceProd.sourceOrderIds || [sourceOrder.id]);
+    targetProd.panels = targetProd.panels.concat(sourceProd.panels || []);
+    targetProd.components = targetProd.components.concat(sourceProd.components || []);
+  });
+
+  Object.keys((sourceOrder.delivery && sourceOrder.delivery.bucket) || {}).forEach(prodName => {
+    const src = sourceOrder.delivery.bucket[prodName];
+    if (!targetOrder.delivery.bucket[prodName]) targetOrder.delivery.bucket[prodName] = { qty: 0, sourceOrderIds: [] };
+    targetOrder.delivery.bucket[prodName].qty += Number(src.qty) || 0;
+    targetOrder.delivery.bucket[prodName].sourceOrderIds = _addUniqueOrderIds_(targetOrder.delivery.bucket[prodName].sourceOrderIds, src.sourceOrderIds || [sourceOrder.id]);
+  });
+
+  Object.keys((sourceOrder.delivery && sourceOrder.delivery.rooms) || {}).forEach(roomName => {
+    if (!targetOrder.delivery.rooms[roomName]) targetOrder.delivery.rooms[roomName] = [];
+
+    (sourceOrder.delivery.rooms[roomName] || []).forEach(item => {
+      const existing = targetOrder.delivery.rooms[roomName].find(entry =>
+        squeezeSpaces_(entry.name) === squeezeSpaces_(item.name) &&
+        squeezeSpaces_(entry.status) === squeezeSpaces_(item.status)
+      );
+
+      if (existing) {
+        existing.qty = (Number(existing.qty) || 0) + (Number(item.qty) || 0);
+        existing.sourceOrderIds = _addUniqueOrderIds_(existing.sourceOrderIds, item.sourceOrderIds || [sourceOrder.id]);
+      } else {
+        targetOrder.delivery.rooms[roomName].push({
+          name: item.name,
+          qty: Number(item.qty) || 0,
+          status: item.status,
+          sourceOrderIds: _addUniqueOrderIds_([], item.sourceOrderIds || [sourceOrder.id])
+        });
+      }
+    });
+  });
+
+  return targetOrder;
+}
+
+function _applyCustomOrderMergesToTree_(tree) {
+  const storedMap = _loadOrderMergeMap_();
+  const mergeMap = _normalizeOrderMergeMap_(storedMap);
+  if (JSON.stringify(storedMap || {}) !== JSON.stringify(mergeMap)) _saveOrderMergeMap_(mergeMap);
+
+  Object.keys(mergeMap).forEach(sourceId => {
+    const rootId = _resolveOrderMergeRoot_(mergeMap[sourceId], mergeMap);
+    if (!sourceId || !rootId || sourceId === rootId) return;
+
+    const sourceOrder = tree[sourceId];
+    const targetOrder = tree[rootId];
+    if (!sourceOrder || !targetOrder) return;
+    if (squeezeSpaces_(sourceOrder.customer).toLowerCase() !== squeezeSpaces_(targetOrder.customer).toLowerCase()) return;
+    if (squeezeSpaces_(sourceOrder.customer).toLowerCase() === "workshop stock") return;
+
+    _mergeOrderObjects_(targetOrder, sourceOrder);
+    delete tree[sourceId];
+  });
+
+  return tree;
+}
+
+function _buildDataTree_(applyCustomMerges) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const hubSheet = ss.getSheetByName("Manufacture Hub");
   const compSheet = ss.getSheetByName("Components Hub");
-  const delivSheet = ss.getSheetByName("Delivery Hub"); // Check this tab name exactly!
+  const delivSheet = ss.getSheetByName("Delivery Hub");
   const tz = Session.getScriptTimeZone();
 
-  // 1. READ PANELS
   if (!hubSheet) throw new Error("CRITICAL: Manufacture Hub tab not found!");
   const panelData = hubSheet.getDataRange().getValues();
-  panelData.shift(); 
-  
-  // 2. READ COMPONENTS
+  panelData.shift();
+
   let compData = [];
   if (compSheet && compSheet.getLastRow() > 1) {
     compData = compSheet.getDataRange().getValues();
-    compData.shift(); 
+    compData.shift();
   }
 
-  // 3. READ DELIVERY (With Safety Check)
   let delivData = [];
   if (delivSheet && delivSheet.getLastRow() > 1) {
     delivData = delivSheet.getDataRange().getValues();
     delivData.shift();
   } else {
-    // If missing, we just log it but don't crash the app
     console.log("Warning: Delivery Hub tab missing or empty.");
   }
 
-  let tree = {};
+  const tree = {};
+  const notesMap = _getShopifyOrderNotesMap_();
+  const norm = v => String(v ?? "").replace(/ /g, " ").trim();
 
-  const norm = v => String(v ?? "").replace(/\u00A0/g, " ").trim();
-
-  // --- PROCESS PANELS ---
   panelData.forEach((row, index) => {
     const orderId = norm(row[0]);
     const customer = row[1];
     let product = norm(row[2]);
-if (!orderId) return;
-if (!product) product = norm(row[3] || "Unknown Product");
+    if (!orderId) return;
+    if (!product) product = norm(row[3] || "Unknown Product");
 
+    const orderObj = _ensureTreeOrder_(tree, orderId, customer);
+    _addOrderNoteEntries_(orderObj, orderId, notesMap[orderId]);
+    const ensured = _ensureTreeProduct_(orderObj, product, orderId);
 
-    if (!tree[orderId]) tree[orderId] = { id: orderId, customer: customer, products: {}, delivery: { bucket: {}, rooms: {} } };
-    if (!tree[orderId].products[product]) tree[orderId].products[product] = { panels: [], components: [] };
-
-    tree[orderId].products[product].panels.push({
-  rowIndex: index + 2,
-  panelName: row[4],
-  material: row[5],
-  qtyPerUnit: Number(row[6]) || 1,       // ✅ NEW (needed for unit maths)
-  qtyOrder: Number(row[11]) || 0,        // total panels required for this part
-  qtyCut: Number(row[12]) || 0,
-  qtyProcessed: Number(row[13]) || 0,
-  qtyEdgeFinish: Number(row[14]) || 0,
-  qtyPacked: Number(row[15]) || 0
-});
+    ensured.value.panels.push({
+      rowIndex: index + 2,
+      sourceOrderId: orderId,
+      panelName: row[4],
+      material: row[5],
+      qtyPerUnit: Number(row[6]) || 1,
+      qtyOrder: Number(row[11]) || 0,
+      qtyCut: Number(row[12]) || 0,
+      qtyProcessed: Number(row[13]) || 0,
+      qtyEdgeFinish: Number(row[14]) || 0,
+      qtyPacked: Number(row[15]) || 0
+    });
   });
 
-  // --- PROCESS COMPONENTS ---
   compData.forEach((row, index) => {
     const orderId = norm(row[0]);
-    const product = norm(row[2]);
+    let product = norm(row[2]);
+    if (!orderId) return;
+    if (!product) product = norm(row[3] || "Unknown Product");
 
-    if (!tree[orderId]) return;
-    if (!tree[orderId].products[product]) tree[orderId].products[product] = { panels: [], components: [] };
+    const orderObj = _ensureTreeOrder_(tree, orderId, row[1]);
+    _addOrderNoteEntries_(orderObj, orderId, notesMap[orderId]);
+    const ensured = _ensureTreeProduct_(orderObj, product, orderId);
 
-    tree[orderId].products[product].components.push({
-  rowIndex: index + 2,
-  compName: row[3],                       // Component
-  sku: row[4],                            // SKU
-  qtyPerUnit: Number(row[5]) || 1,        // Qty Per Unit
-  qtyRequired: Number(row[6]) || 0,       // Qty Required
-  qtyPacked: Number(row[7]) || 0,         // Qty packed
-  lastUser: String(row[8] || ""),
-  lastUpdated: (row[9] instanceof Date)
-  ? Utilities.formatDate(row[9], tz, "dd/MM/yyyy HH:mm")
-  : String(row[9] || "")
-});
+    ensured.value.components.push({
+      rowIndex: index + 2,
+      sourceOrderId: orderId,
+      compName: row[3],
+      sku: row[4],
+      qtyPerUnit: Number(row[5]) || 1,
+      qtyRequired: Number(row[6]) || 0,
+      qtyPacked: Number(row[7]) || 0,
+      lastUser: String(row[8] || ""),
+      lastUpdated: (row[9] instanceof Date)
+        ? Utilities.formatDate(row[9], tz, "dd/MM/yyyy HH:mm")
+        : String(row[9] || "")
+    });
   });
 
- 
-  // --- PROCESS DELIVERY ---
-delivData.forEach((row) => {
-  const orderId = norm(row[0]);
-  const product = norm(row[3]);
-  const room = canonicalRoomName_(row[4]); // ✅ canonical room
-  const status = norm(row[5]) || "Pending"; // ✅ normalise
+  delivData.forEach(row => {
+    const orderId = norm(row[0]);
+    const product = norm(row[3]);
+    const room = canonicalRoomName_(row[4]);
+    const status = norm(row[5]) || "Pending";
+    if (!orderId) return;
 
-  if (!tree[orderId]) return;
+    const orderObj = _ensureTreeOrder_(tree, orderId, row[1]);
+    _addOrderNoteEntries_(orderObj, orderId, notesMap[orderId]);
+    _ensureTreeProduct_(orderObj, product, orderId);
 
-  if (room === "") {
-    if (!tree[orderId].delivery.bucket[product]) {
-      tree[orderId].delivery.bucket[product] = { qty: 0 };
-    }
-    tree[orderId].delivery.bucket[product].qty++;
-  } else {
-    if (!tree[orderId].delivery.rooms[room]) {
-      tree[orderId].delivery.rooms[room] = [];
+    if (room === "") {
+      if (!orderObj.delivery.bucket[product]) orderObj.delivery.bucket[product] = { qty: 0, sourceOrderIds: [] };
+      orderObj.delivery.bucket[product].qty++;
+      orderObj.delivery.bucket[product].sourceOrderIds = _addUniqueOrderIds_(orderObj.delivery.bucket[product].sourceOrderIds, [orderId]);
+      return;
     }
 
-    let existingItem = tree[orderId].delivery.rooms[room]
-      .find(i => norm(i.name) === product && norm(i.status) === status); // ✅ normalise
+    if (!orderObj.delivery.rooms[room]) orderObj.delivery.rooms[room] = [];
+    const existingItem = orderObj.delivery.rooms[room].find(item => norm(item.name) === product && norm(item.status) === status);
 
-    if (existingItem) existingItem.qty++;
-    else tree[orderId].delivery.rooms[room].push({ name: product, qty: 1, status: status });
-  }
-});
+    if (existingItem) {
+      existingItem.qty++;
+      existingItem.sourceOrderIds = _addUniqueOrderIds_(existingItem.sourceOrderIds, [orderId]);
+    } else {
+      orderObj.delivery.rooms[room].push({
+        name: product,
+        qty: 1,
+        status: status,
+        sourceOrderIds: [orderId]
+      });
+    }
+  });
 
+  if (applyCustomMerges) _applyCustomOrderMergesToTree_(tree);
+  return _decorateOrderTree_(tree);
+}
 
-  return tree;
+function getDataTree() {
+  return _buildDataTree_(true);
 }
 
 // 3. UPDATE QUANTITIES (Robust Dynamic Version)
@@ -790,6 +1121,7 @@ function getPendingShopifyOrdersWithStock() {
   const idxSku = hm["product code"];
   const idxQty = hm["quantity ordered"];
   const idxStatus = hm["import status"];
+  const idxNotes = hm["notes"];
 
   if ([idxOrderId, idxCustomer, idxProductName, idxSku, idxQty, idxStatus].some(x => x == null)) {
     throw new Error("Shopify Orders headers don't match expected names. Check spelling/case.");
@@ -805,6 +1137,7 @@ function getPendingShopifyOrdersWithStock() {
     const sku = _normTxt(values[r][idxSku]);
     const qtyOrdered = Number(values[r][idxQty]) || 0;
     const status = _normTxt(values[r][idxStatus]);
+    const notes = idxNotes == null ? "" : squeezeSpaces_(values[r][idxNotes]);
 
     if (!orderId || !sku || qtyOrdered <= 0) continue;
 
@@ -828,6 +1161,7 @@ function getPendingShopifyOrdersWithStock() {
       sku,
       qtyOrdered,
       importStatus: status,
+      notes,
       allocatedFromStock: allocated,
       remainingToAllocate,
       availableInStock: avail,
@@ -883,6 +1217,7 @@ function getSmartOrderSummary(orderId) {
   const idxSku = hm["product code"];
   const idxQty = hm["quantity ordered"];
   const idxStatus = hm["import status"];
+  const idxNotes = hm["notes"];
 
   if ([idxOrderId, idxCustomer, idxProductName, idxSku, idxQty, idxStatus].some(x => x == null)) {
     throw new Error("Shopify Orders headers don't match expected names. Check spelling/case.");
@@ -1266,9 +1601,11 @@ function exportSmartOrderToSheets(orderId) {
   };
 }
 
-function exportRoomListToSheets(orderId) {
-  const targetOrderId = String(orderId || "").trim();
-  if (!targetOrderId) throw new Error("Missing order ID for room list export.");
+function exportRoomListToSheets(orderIdsOrId) {
+  const targetOrderIds = _getOrderIdArray_(orderIdsOrId);
+  if (!targetOrderIds.length) throw new Error("Missing order ID for room list export.");
+  const orderIdSet = {};
+  targetOrderIds.forEach(id => orderIdSet[id] = true);
 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const deliverySheet = ss.getSheetByName("Delivery Hub");
@@ -1277,13 +1614,13 @@ function exportRoomListToSheets(orderId) {
   const data = deliverySheet.getDataRange().getValues();
   if (!data || data.length <= 1) throw new Error("No delivery data found.");
 
-  const norm = (v) => String(v ?? "").replace(/\u00A0/g, " ").trim();
+  const norm = (v) => String(v ?? "").replace(/ /g, " ").trim();
   const rows = [];
   let customerName = "";
 
   for (let i = 1; i < data.length; i++) {
     const row = data[i];
-    if (norm(row[0]) !== targetOrderId) continue;
+    if (!orderIdSet[norm(row[0])]) continue;
 
     const customer = String(row[1] || "").trim();
     if (!customerName && customer) customerName = customer;
@@ -1293,12 +1630,10 @@ function exportRoomListToSheets(orderId) {
     const status = norm(row[5]) || "Pending";
 
     if (!room) continue;
-    rows.push({ room, product, status });
+    rows.push({ room: room, product: product, status: status });
   }
 
-  if (rows.length === 0) {
-    throw new Error("No room assignments found for this order.");
-  }
+  if (rows.length === 0) throw new Error("No room assignments found for this order.");
 
   rows.sort((a, b) => {
     const roomCmp = a.room.localeCompare(b.room);
@@ -1314,16 +1649,17 @@ function exportRoomListToSheets(orderId) {
     grouped.set(key, (grouped.get(key) || 0) + 1);
   });
 
+  const orderLabel = targetOrderIds.join(" & ");
   const tz = Session.getScriptTimeZone();
   const timestamp = Utilities.formatDate(new Date(), tz, "yyyy-MM-dd HH:mm");
   const generatedOn = Utilities.formatDate(new Date(), tz, "dd/MM/yyyy HH:mm");
-  const out = SpreadsheetApp.create(`Room List - ${targetOrderId} - ${timestamp}`);
+  const out = SpreadsheetApp.create(`Room List - ${orderLabel} - ${timestamp}`);
   const sh = out.getSheets()[0];
   sh.setName("Room List");
 
   let r = 1;
   sh.getRange(r++, 1).setValue("Room List Export").setFontWeight("bold").setFontSize(14);
-  sh.getRange(r++, 1).setValue(`Order ID: ${targetOrderId}`);
+  sh.getRange(r++, 1).setValue(`Order ID: ${orderLabel}`);
   sh.getRange(r++, 1).setValue(`Customer: ${customerName || "Unknown"}`);
   sh.getRange(r++, 1).setValue(`Generated: ${generatedOn}`);
   r += 1;
@@ -1402,6 +1738,79 @@ function approveShopifyOrder(shopifyRowIndex) {
 
 
 // 5. UPDATE COMPONENT STATUS
+function getShopifyMergeOptions(shopifyRowIndex) {
+  const sh = _getShopifyOrdersSheet();
+  const headers = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(h => _normTxt(h).toLowerCase());
+  const hm = _headerMap_(headers);
+
+  const idxOrderId = hm["order id"];
+  const idxCustomer = hm["customer"];
+  if (idxOrderId == null || idxCustomer == null) throw new Error("Shopify Orders headers missing Order ID / Customer.");
+
+  const row = sh.getRange(shopifyRowIndex, 1, 1, sh.getLastColumn()).getValues()[0];
+  const orderId = _normTxt(row[idxOrderId]);
+  const customer = squeezeSpaces_(row[idxCustomer]);
+  const customerNorm = customer.toLowerCase();
+  const mergeMap = _normalizeOrderMergeMap_(_loadOrderMergeMap_());
+  const existingMergeTargetId = _resolveOrderMergeRoot_(orderId, mergeMap);
+  const tree = getDataTree();
+
+  const candidates = Object.keys(tree)
+    .map(key => tree[key])
+    .filter(orderObj => {
+      if (!orderObj || orderObj.isWorkshop || orderObj.isComplete) return false;
+      if (squeezeSpaces_(orderObj.customer).toLowerCase() !== customerNorm) return false;
+      const memberIds = _getOrderIdArray_(orderObj.memberOrderIds || [orderObj.id]);
+      return memberIds.indexOf(orderId) === -1;
+    })
+    .map(orderObj => ({
+      targetOrderId: orderObj.mergeTargetOrderId || orderObj.id,
+      displayOrderIds: _getOrderIdArray_(orderObj.displayOrderIds || [orderObj.id]),
+      customer: orderObj.customer
+    }))
+    .sort((a, b) => b.displayOrderIds.join(" & ").localeCompare(a.displayOrderIds.join(" & ")));
+
+  return {
+    orderId: orderId,
+    customer: customer,
+    existingMergeTargetId: (existingMergeTargetId && existingMergeTargetId !== orderId) ? existingMergeTargetId : "",
+    candidates: candidates
+  };
+}
+
+function mergeImportedOrderIntoExisting_(sourceOrderId, targetOrderId, expectedCustomer) {
+  const sourceId = squeezeSpaces_(sourceOrderId);
+  const targetId = squeezeSpaces_(targetOrderId);
+  const customerNorm = squeezeSpaces_(expectedCustomer).toLowerCase();
+  if (!sourceId || !targetId || sourceId === targetId) return targetId;
+
+  const currentMap = _normalizeOrderMergeMap_(_loadOrderMergeMap_());
+  const sourceRoot = _resolveOrderMergeRoot_(sourceId, currentMap) || sourceId;
+  const targetRoot = _resolveOrderMergeRoot_(targetId, currentMap) || targetId;
+  if (!sourceRoot || !targetRoot || sourceRoot === targetRoot) return targetRoot;
+
+  const tree = getDataTree();
+  const sourceOrder = tree[sourceRoot] || _buildDataTree_(false)[sourceRoot];
+  const targetOrder = tree[targetRoot] || _buildDataTree_(false)[targetRoot];
+  if (!sourceOrder) throw new Error(`Imported order ${sourceId} could not be found for merging.`);
+  if (!targetOrder) throw new Error(`Merge target ${targetId} is no longer available.`);
+  if (targetOrder.isWorkshop || targetOrder.isComplete) throw new Error(`Order ${targetRoot} is not available for merge.`);
+
+  const sourceCustomer = squeezeSpaces_(sourceOrder.customer).toLowerCase();
+  const targetCustomer = squeezeSpaces_(targetOrder.customer).toLowerCase();
+  if (customerNorm && targetCustomer !== customerNorm) throw new Error(`Order ${targetRoot} belongs to a different customer.`);
+  if (sourceCustomer !== targetCustomer) throw new Error("Only orders with the same customer name can be merged.");
+
+  const nextMap = _normalizeOrderMergeMap_(currentMap);
+  Object.keys(nextMap).forEach(key => {
+    const root = _resolveOrderMergeRoot_(key, nextMap);
+    if (root === sourceRoot) nextMap[key] = targetRoot;
+  });
+  nextMap[sourceRoot] = targetRoot;
+  _saveOrderMergeMap_(nextMap);
+  return targetRoot;
+}
+
 function updateComponentStatus(rowIndex, isPacked) {
 
     const lock = LockService.getScriptLock();
@@ -1423,10 +1832,19 @@ function updateComponentStatus(rowIndex, isPacked) {
 
 }
 
+function _getAllowedOrderIdSet_(orderIdsOrId) {
+  const ids = _getOrderIdArray_(orderIdsOrId);
+  const set = {};
+  ids.forEach(id => set[id] = true);
+  return { ids: ids, set: set };
+}
+
 // 7. DELIVERY: ASSIGN ITEMS TO ROOM (Planning Phase)
-function assignToRoom(orderId, productName, qtyToAssign, roomName) {
+function assignToRoom(orderIdsOrId, productName, qtyToAssign, roomName) {
   roomName = canonicalRoomName_(roomName);
   if (!roomName) return "Error: Room name is required";
+  const allowedOrders = _getAllowedOrderIdSet_(orderIdsOrId);
+  if (!allowedOrders.ids.length) return "Error: Order ID is required";
 
     const lock = LockService.getScriptLock();
   lock.waitLock(30000);
@@ -1453,7 +1871,7 @@ function assignToRoom(orderId, productName, qtyToAssign, roomName) {
 
     const normTxt = (v) => String(v ?? "").replace(/\u00A0/g, " ").trim();
 
-if (normTxt(row[0]) !== normTxt(orderId)) continue;
+if (!allowedOrders.set[normTxt(row[0])]) continue;
 if (normTxt(row[3]) !== normTxt(productName)) continue;
 if (normTxt(row[4]) !== "") continue; // already assigned
 
@@ -1510,8 +1928,9 @@ function logDeliveryFittingHistory_(orderId, productName, newStatus, qty, roomNa
 }
 
 // 8. DELIVERY: UPDATE STATUS (DIAGNOSTIC VERSION)
-function updateDeliveryStatus(orderId, roomName, productName, oldStatus, newStatus, qtyToUpdate) {
+function updateDeliveryStatus(orderIdsOrId, roomName, productName, oldStatus, newStatus, qtyToUpdate) {
   roomName = canonicalRoomName_(roomName);
+  const allowedOrders = _getAllowedOrderIdSet_(orderIdsOrId);
 
     const lock = LockService.getScriptLock();
   lock.waitLock(30000);
@@ -1537,7 +1956,7 @@ function updateDeliveryStatus(orderId, roomName, productName, oldStatus, newStat
   const delta = (movingIntoSite && !alreadyOnSite) ? qtyToUpdate : 0;
 
   if (delta > 0) {
-    const maxAllowed = getMaxReadyFromFactory(orderId, productName);
+    const maxAllowed = getMaxReadyFromFactory(allowedOrders.ids, productName);
 
     const data = sheet.getDataRange().getValues();
     let currentlyUsed = 0;
@@ -1546,7 +1965,7 @@ function updateDeliveryStatus(orderId, roomName, productName, oldStatus, newStat
       const row = data[i];
       
 
-if (normTxt(row[0]) === normTxt(orderId) && normTxt(row[3]) === normTxt(productName)) {
+if (allowedOrders.set[normTxt(row[0])] && normTxt(row[3]) === normTxt(productName)) {
 
         const st = normStatus(row[5]);
         if (st === "Delivered" || st === "Fitted") currentlyUsed++;
@@ -1568,7 +1987,7 @@ if (normTxt(row[0]) === normTxt(orderId) && normTxt(row[3]) === normTxt(productN
   for (let i = 1; i < data.length; i++) {
     const row = data[i];
 
-    if (normTxt(row[0]) !== normTxt(orderId)) continue;
+    if (!allowedOrders.set[normTxt(row[0])]) continue;
     if (roomKey_(row[4]) !== roomKey_(roomName)) continue;
     if (normTxt(row[3]) !== normTxt(productName)) continue;
 
@@ -1586,7 +2005,7 @@ if (normTxt(row[0]) === normTxt(orderId) && normTxt(row[3]) === normTxt(productN
 
   if (updated === 0) return "Error: No matching items found to update.";
 
-  logDeliveryFittingHistory_(orderId, productName, newStatus, updated, roomName, user, ts);
+  logDeliveryFittingHistory_(allowedOrders.ids.join(" & "), productName, newStatus, updated, roomName, user, ts);
   return "SUCCESS";
 
     } finally {
@@ -1597,14 +2016,14 @@ if (normTxt(row[0]) === normTxt(orderId) && normTxt(row[3]) === normTxt(productN
 
 
 // 9. HELPER: CALCULATE MAX COMPLETED UNITS (Strict Match)
-function getMaxReadyFromFactory(orderId, productName) {
+function getMaxReadyFromFactory(orderIdsOrId, productName) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const hubSheet = ss.getSheetByName("Manufacture Hub");
   const compSheet = ss.getSheetByName("Components Hub");
   
   const normTxt = (v) => String(v ?? "").replace(/\u00A0/g, " ").trim();
 
-  const targetId = normTxt(orderId);
+  const allowedOrders = _getAllowedOrderIdSet_(orderIdsOrId);
   const targetProd = normTxt(productName);
 
   // 1. Get Panel Data
@@ -1615,7 +2034,7 @@ function getMaxReadyFromFactory(orderId, productName) {
   for (let i = 1; i < pData.length; i++) {
     const row = pData[i];
     // Strict Match
-    if (normTxt(row[0]) === targetId && normTxt(row[2]) === targetProd) {
+    if (allowedOrders.set[normTxt(row[0])] && normTxt(row[2]) === targetProd) {
       hasPanels = true;
       const qtyPerUnit = Number(row[6]) || 1;
       const qtyPacked = Number(row[15]) || 0; // Col P
@@ -1633,7 +2052,7 @@ let hasComps = false;
 for (let i = 1; i < cData.length; i++) {
   const row = cData[i];
 
-  if (normTxt(row[0]) === targetId && normTxt(row[2]) === targetProd) {
+  if (allowedOrders.set[normTxt(row[0])] && normTxt(row[2]) === targetProd) {
     hasComps = true;
 
     const perUnit = Number(row[5]) || 1;   // Col F
@@ -1663,8 +2082,9 @@ if (minCompsReady === Infinity) minCompsReady = 0;
 }
 
 // 10. DELIVERY: UNASSIGN ITEMS (Return to Bucket)
-function unassignFromRoom(orderId, roomName, productName, qtyToUnassign) {
+function unassignFromRoom(orderIdsOrId, roomName, productName, qtyToUnassign) {
   roomName = canonicalRoomName_(roomName);
+  const allowedOrders = _getAllowedOrderIdSet_(orderIdsOrId);
 
     const lock = LockService.getScriptLock();
   lock.waitLock(30000);
@@ -1684,7 +2104,7 @@ function unassignFromRoom(orderId, roomName, productName, qtyToUnassign) {
   for (let i = 1; i < data.length; i++) {
     const row = data[i];
 
-    if (normTxt(row[0]) !== normTxt(orderId)) continue;
+    if (!allowedOrders.set[normTxt(row[0])]) continue;
     if (roomKey_(row[4]) !== roomKey_(roomName)) continue;
     if (normTxt(row[3]) !== normTxt(productName)) continue;
 
@@ -1708,9 +2128,10 @@ function unassignFromRoom(orderId, roomName, productName, qtyToUnassign) {
 
 
 // --- CNC EXPORT ---
-function exportCncXml(orderId, productName) {
+function exportCncXml(orderIdsOrId, productName) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const hubSheet = ss.getSheetByName("Manufacture Hub");
+  const allowedOrders = _getAllowedOrderIdSet_(orderIdsOrId);
   
   // 1. Get Data
   const data = hubSheet.getDataRange().getValues();
@@ -1722,7 +2143,7 @@ function exportCncXml(orderId, productName) {
     const row = data[i];
     
     // Check match: Order ID (Col A) and Product Name (Col C)
-    if (String(row[0]) === String(orderId) && String(row[2]) === String(productName)) {
+    if (allowedOrders.set[String(row[0]).trim()] && String(row[2]) === String(productName)) {
       
       const length = row[7]; // Col H
       const width = row[8];  // Col I
@@ -1748,7 +2169,7 @@ function exportCncXml(orderId, productName) {
   if (count === 0) return "Error: No panels found for " + productName;
 
   // 4. Save to Drive
-  const fileName = `CNC_${orderId}_${productName}.xml`.replace(/ /g, "_");
+  const fileName = `CNC_${_getOrderIdArray_(orderIdsOrId).join("_")}_${productName}.xml`.replace(/ /g, "_");
   
   // --- THE FIX IS HERE: Use "text/xml" string instead of MimeType.XML ---
   const file = DriveApp.createFile(fileName, xmlContent, "text/xml");
@@ -2656,7 +3077,7 @@ function allocateFinishedGoodsToOrder(shopifyRowIndex, qtyToAllocate) {
 
 }
 
-function approveAndImportShopifyRow(shopifyRowIndex) {
+function approveAndImportShopifyRow(shopifyRowIndex, mergeTargetOrderId) {
 
     const lock = LockService.getScriptLock();
   lock.waitLock(30000);
@@ -2668,7 +3089,7 @@ function approveAndImportShopifyRow(shopifyRowIndex) {
   if (res !== "SUCCESS") return res;
 
   // 2) Import that ONE line immediately (function lives in Import.gs)
-  return importApprovedShopifyRow_(shopifyRowIndex);
+  return importApprovedShopifyRow_(shopifyRowIndex, mergeTargetOrderId);
 
     } finally {
     lock.releaseLock();
