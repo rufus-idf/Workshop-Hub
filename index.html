@@ -671,8 +671,6 @@
 
         <div class="modal-body">
             <input type="hidden" id="alloc-row-index">
-            <input type="hidden" id="alloc-item-source">
-            <input type="hidden" id="alloc-offcut-id">
 
             <label class="small fw-bold text-muted mb-1">1. ASSIGNED ORDER</label>
             <div id="alloc-project-name" class="form-control mb-3 bg-light">-</div>
@@ -683,14 +681,34 @@
             </div>
 
             <label class="small fw-bold text-muted mb-1">3. QUANTITY TO USE</label>
-            <div class="d-flex align-items-center mb-3">
+            <div class="d-flex align-items-center mb-4">
                 <button class="btn btn-outline-secondary" onclick="stepAllocQty(-1)">−</button>
                 <input type="number" id="alloc-qty" class="form-control text-center mx-2 fw-bold" value="1" style="max-width:80px;">
                 <button class="btn btn-outline-secondary" onclick="stepAllocQty(1)">+</button>
             </div>
 
-            <div class="alert alert-light border small text-muted mb-0">
-              Offcuts are now captured in the external offcut system and can be allocated here, but this screen no longer creates new offcuts.
+            <hr>
+
+            <div class="form-check form-switch mb-3">
+                <input class="form-check-input" type="checkbox" id="alloc-log-offcut" onchange="toggleOffcutFields()">
+                <label class="form-check-label fw-bold" for="alloc-log-offcut">Generate Offcut?</label>
+            </div>
+
+            <div id="alloc-offcut-fields" class="hidden bg-light p-3 rounded">
+                <div class="row g-2">
+                    <div class="col-6">
+                        <small>Length (mm)</small>
+                        <input type="number" id="off-len" class="form-control" placeholder="L">
+                    </div>
+                    <div class="col-6">
+                        <small>Width (mm)</small>
+                        <input type="number" id="off-wid" class="form-control" placeholder="W">
+                    </div>
+                    <div class="col-12 mt-2">
+                        <small>Quantity Created</small>
+                        <input type="number" id="off-qty" class="form-control" value="1">
+                    </div>
+                </div>
             </div>
 
         </div>
@@ -744,26 +762,6 @@
             </table>
         </div>
         <div class="modal-footer border-0 p-2"><button type="button" class="btn btn-sm btn-light w-100" data-bs-dismiss="modal">Close</button></div>
-      </div>
-    </div>
-  </div>
-
-
-  <div class="modal fade" id="offcutPreviewModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-lg">
-      <div class="modal-content border-0 shadow">
-        <div class="modal-header border-0 pb-0">
-          <div>
-            <h5 class="modal-title fw-bold" id="offcut-preview-title">Offcut</h5>
-          </div>
-          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-        </div>
-        <div class="modal-body">
-          <div id="offcut-preview-stage" class="offcut-preview-stage"></div>
-        </div>
-        <div class="modal-footer border-0 pt-0">
-          <button type="button" class="btn btn-light w-100 rounded-pill" data-bs-dismiss="modal">Close</button>
-        </div>
       </div>
     </div>
   </div>
