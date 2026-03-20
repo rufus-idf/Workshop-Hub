@@ -3618,26 +3618,50 @@ function chooseShopifyMergeTarget(context) {
   const existingTargetId = norm(safe.existingMergeTargetId);
   const candidates = Array.isArray(safe.candidates) ? safe.candidates : [];
 
-  if (existingTargetId) return existingTargetId;
+  const getCandidateLabel = (candidate) => Array.isArray(candidate?.displayOrderIds) && candidate.displayOrderIds.length
+    ? candidate.displayOrderIds.join(' & ')
+    : norm(candidate?.targetOrderId);
+
+  if (existingTargetId) {
+    const existingCandidate = candidates.find(candidate => norm(candidate.targetOrderId) === existingTargetId)
+      || { targetOrderId: existingTargetId, displayOrderIds: [existingTargetId] };
+    const label = getCandidateLabel(existingCandidate);
+    const keepMerged = confirm(
+      `This Shopify order is already linked to existing order #${label}.
+
+` +
+      `Press OK to keep importing it into #${label}, or Cancel to stop this import.`
+    );
+    return keepMerged ? existingTargetId : null;
+  }
+
   if (!candidates.length) return "";
+
+  if (candidates.length === 1) {
+    const label = getCandidateLabel(candidates[0]);
+    const shouldMerge = confirm(
+      `${customer} already has an active manufacturing order (#${label}).
+
+` +
+      `Press OK to merge this into order #${label}, or Cancel to keep it as a separate order.`
+    );
+    return shouldMerge ? norm(candidates[0].targetOrderId) : "";
+  }
 
   const options = ['0. Keep as a separate order'];
   candidates.forEach((candidate, idx) => {
-    const label = Array.isArray(candidate.displayOrderIds) && candidate.displayOrderIds.length
-      ? candidate.displayOrderIds.join(' & ')
-      : candidate.targetOrderId;
-    options.push(`${idx + 1}. Merge with existing order #${label}`);
+    options.push(`${idx + 1}. Merge with existing order #${getCandidateLabel(candidate)}`);
   });
 
   const promptText = [
-    `${customer} already has an active manufacturing order.`,
+    `${customer} already has active manufacturing orders.`,
     '',
     ...options,
     '',
     'Enter the number of your choice:'
   ].join('\n');
 
-  const entered = prompt(promptText, candidates.length === 1 ? '1' : '0');
+  const entered = prompt(promptText, '0');
   if (entered === null) return null;
 
   const choice = parseInt(entered, 10);
