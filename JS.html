@@ -204,13 +204,13 @@ function formatOffcutArea(value) {
 }
 
 const offcutViewState = {
-  stock: { shapeType: 'ALL', sortBy: 'area_desc' },
-  cnc: { shapeType: 'ALL', sortBy: 'area_desc' }
+  stock: { shapeType: 'ALL', woodType: 'ALL', sortBy: 'area_desc' },
+  cnc: { shapeType: 'ALL', woodType: 'ALL', sortBy: 'area_desc' }
 };
 
 function getOffcutViewState(viewKey) {
   if (!offcutViewState[viewKey]) {
-    offcutViewState[viewKey] = { shapeType: 'ALL', sortBy: 'area_desc' };
+    offcutViewState[viewKey] = { shapeType: 'ALL', woodType: 'ALL', sortBy: 'area_desc' };
   }
   return offcutViewState[viewKey];
 }
@@ -229,6 +229,11 @@ function setOffcutShapeFilter(viewKey, value) {
   rerenderOffcutView(viewKey);
 }
 
+function setOffcutWoodTypeFilter(viewKey, value) {
+  getOffcutViewState(viewKey).woodType = value || 'ALL';
+  rerenderOffcutView(viewKey);
+}
+
 function setOffcutSort(viewKey, value) {
   getOffcutViewState(viewKey).sortBy = value || 'area_desc';
   rerenderOffcutView(viewKey);
@@ -237,15 +242,24 @@ function setOffcutSort(viewKey, value) {
 function buildOffcutTable(rows, viewKey) {
   const safeRows = Array.isArray(rows) ? rows.slice() : [];
   const state = getOffcutViewState(viewKey);
+  const viewKeyArg = String(viewKey || 'stock').replace(/'/g, "\\'");
   const shapeTypes = Array.from(new Set(
     safeRows
       .map(item => String(item.shapeType || '').trim().toUpperCase())
       .filter(Boolean)
   )).sort((a, b) => a.localeCompare(b));
+  const woodTypes = Array.from(new Set(
+    safeRows
+      .map(item => String(item.material || '').trim())
+      .filter(Boolean)
+  )).sort((a, b) => a.localeCompare(b));
 
   const filteredRows = safeRows.filter(item => {
     const shapeType = String(item.shapeType || '').trim().toUpperCase();
-    return state.shapeType === 'ALL' || shapeType === state.shapeType;
+    const woodType = String(item.material || '').trim();
+    const shapeMatch = state.shapeType === 'ALL' || shapeType === state.shapeType;
+    const woodMatch = state.woodType === 'ALL' || woodType === state.woodType;
+    return shapeMatch && woodMatch;
   });
 
   filteredRows.sort((a, b) => {
@@ -265,16 +279,23 @@ function buildOffcutTable(rows, viewKey) {
     <div class="card border-0 shadow-sm mb-3">
       <div class="card-body">
         <div class="row g-2 align-items-end">
-          <div class="col-12 col-md-6">
+          <div class="col-12 col-md-4">
+            <label class="small text-muted mb-1">Filter by Wood Type</label>
+            <select class="form-select" onchange="setOffcutWoodTypeFilter('${viewKeyArg}', this.value)">
+              <option value="ALL"${state.woodType === 'ALL' ? ' selected' : ''}>All Wood Types</option>
+              ${woodTypes.map(type => `<option value="${escHtml(type)}"${state.woodType === type ? ' selected' : ''}>${escHtml(type)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="col-12 col-md-4">
             <label class="small text-muted mb-1">Filter by Shape Type</label>
-            <select class="form-select" onchange="setOffcutShapeFilter(${jsStr(viewKey)}, this.value)">
+            <select class="form-select" onchange="setOffcutShapeFilter('${viewKeyArg}', this.value)">
               <option value="ALL"${state.shapeType === 'ALL' ? ' selected' : ''}>All Shapes</option>
               ${shapeTypes.map(type => `<option value="${escHtml(type)}"${state.shapeType === type ? ' selected' : ''}>${escHtml(type)}</option>`).join('')}
             </select>
           </div>
-          <div class="col-12 col-md-6">
+          <div class="col-12 col-md-4">
             <label class="small text-muted mb-1">Sort by Area</label>
-            <select class="form-select" onchange="setOffcutSort(${jsStr(viewKey)}, this.value)">
+            <select class="form-select" onchange="setOffcutSort('${viewKeyArg}', this.value)">
               <option value="area_desc"${state.sortBy === 'area_desc' ? ' selected' : ''}>Largest to Smallest</option>
               <option value="area_asc"${state.sortBy === 'area_asc' ? ' selected' : ''}>Smallest to Largest</option>
             </select>
