@@ -8,7 +8,7 @@
   let pendingUpdates = {};
   let saveTimer = null;
   let assignQueue = {};
-  let currentWoodSubTab = 'instock';
+  let currentWoodSubTab = 'instock'; 
   let currentEdgeSubTab = 'instock';
   let pendingCompUpdates = {};
   let compSaveTimer = null;
@@ -144,15 +144,15 @@ function checkOrderBadge() {
 // Find "function startHealthMonitor()" around line 13 and add the check inside:
 function startHealthMonitor() {
   if (healthTimer) return;
-
+  
   const pingOnce = () => {
     google.script.run
       .withSuccessHandler(() => setHealthBadge(true))
       .withFailureHandler(() => setHealthBadge(false))
       .ping();
-
+      
     // NEW: Check for orders every ping (30s)
-    checkOrderBadge();
+    checkOrderBadge(); 
   };
 
   pingOnce();
@@ -192,153 +192,6 @@ const fmtNum = (v, digits = 0) => {
 };
 const fmtMaybe = (v, digits = 0) => (v == null ? "-" : fmtNum(v, digits));
 const jsStr = (s) => JSON.stringify(String(s ?? ""));
-
-const isExternalOffcutItem = (item) => String(item?.source || '').toLowerCase() === 'external_offcut';
-const isOffcutItem = (item) => isExternalOffcutItem(item) || String(item?.type || '').toLowerCase().includes('offcut');
-const getWoodItemByRowIndex = (rowIndex) => (stockData.wood || []).find(x => String(x.rowIndex) === String(rowIndex));
-const getOffcutItemById = (offcutId) => (stockData.wood || []).find(x => isExternalOffcutItem(x) && String(x.offcutId) === String(offcutId));
-const fmtMm = (v) => `${fmtNum(v, 0)} mm`;
-const fmtOffcutAreaM2 = (item) => `${fmtNum(item?.areaM2 ?? ((Number(item?.areaMm2) || 0) / 1000000), 2)} m²`;
-const offcutShapeBadgeClass = (shapeType) => {
-  const shape = String(shapeType || '').toUpperCase();
-  if (shape === 'RECT') return 'bg-success-subtle text-success border border-success-subtle';
-  if (shape === 'L') return 'bg-primary-subtle text-primary border border-primary-subtle';
-  if (shape === 'C') return 'bg-info-subtle text-info border border-info-subtle';
-  return 'bg-warning text-dark border border-warning-subtle';
-};
-
-function buildOffcutTableHtml(context, rows) {
-  if (!rows || rows.length === 0) return '<div class="text-center text-muted py-4">No offcuts found.</div>';
-
-  let html = `
-    <div class="table-responsive bg-white rounded shadow-sm border">
-      <table class="table table-hover align-middle mb-0 text-start">
-        <thead class="bg-light">
-          <tr class="text-secondary small text-uppercase">
-            <th class="ps-3">Offcut ID</th>
-            <th>Material</th>
-            <th>Shape</th>
-            <th class="text-end">Length</th>
-            <th class="text-end">Width</th>
-            <th class="text-end">Area</th>
-            <th class="text-end pe-3">Action</th>
-          </tr>
-        </thead>
-        <tbody>`;
-
-  rows.forEach(item => {
-    const previewCall = `openOffcutPreviewById(${jsStr(item.offcutId)})`;
-    const allocateCall = `openAllocateModal(${jsStr(item.rowIndex)})`;
-    const actionButtons = [
-      `<button class="btn btn-outline-secondary btn-sm px-2" onclick="event.stopPropagation(); ${previewCall}" title="Preview Offcut">👁</button>`
-    ];
-    if (context === 'cnc') {
-      actionButtons.unshift(`<button class="btn btn-dark btn-sm rounded-pill px-3 fw-bold" onclick="event.stopPropagation(); ${allocateCall}" title="Allocate Offcut">ALLOCATE</button>`);
-    }
-
-    html += `
-      <tr class="wood-row offcut-row-clickable" onclick="${previewCall}">
-        <td class="ps-3 fw-bold text-dark">${escHtml(item.offcutId || '-')}</td>
-        <td>${escHtml(item.material || 'Unknown')}</td>
-        <td><span class="badge ${offcutShapeBadgeClass(item.shapeType)}">${escHtml(item.shapeType || 'POLYGON')}</span></td>
-        <td class="text-end" style="font-family:monospace;">${fmtNum(item.displayLengthMm || item.length || 0)}</td>
-        <td class="text-end" style="font-family:monospace;">${fmtNum(item.displayWidthMm || item.width || 0)}</td>
-        <td class="text-end">${fmtOffcutAreaM2(item)}</td>
-        <td class="text-end pe-3"><div class="d-flex justify-content-end gap-2">${actionButtons.join('')}</div></td>
-      </tr>`;
-  });
-
-  html += '</tbody></table></div>';
-  return html;
-}
-
-function getOffcutGeometryMetrics(item) {
-  const vertices = Array.isArray(item?.vertices) ? item.vertices : [];
-  if (!vertices.length) {
-    return { points: [], minX: 0, minY: 0, width: 1, height: 1, edges: [] };
-  }
-
-  const points = vertices.map(pair => [Number(pair?.[0]) || 0, Number(pair?.[1]) || 0]);
-  let minX = points[0][0];
-  let minY = points[0][1];
-  let maxX = points[0][0];
-  let maxY = points[0][1];
-  points.forEach(([x, y]) => {
-    minX = Math.min(minX, x);
-    minY = Math.min(minY, y);
-    maxX = Math.max(maxX, x);
-    maxY = Math.max(maxY, y);
-  });
-
-  const edges = points.map((point, idx) => {
-    const next = points[(idx + 1) % points.length];
-    const dx = next[0] - point[0];
-    const dy = next[1] - point[1];
-    const length = Math.sqrt(dx * dx + dy * dy);
-    return {
-      x1: point[0], y1: point[1], x2: next[0], y2: next[1],
-      midX: (point[0] + next[0]) / 2,
-      midY: (point[1] + next[1]) / 2,
-      length
-    };
-  });
-
-  return {
-    points,
-    minX,
-    minY,
-    width: Math.max(1, maxX - minX),
-    height: Math.max(1, maxY - minY),
-    edges
-  };
-}
-
-function buildOffcutPreviewSvg(item) {
-  const metrics = getOffcutGeometryMetrics(item);
-  if (!metrics.points.length) return '<div class="text-center text-muted py-5">No geometry available for this offcut.</div>';
-
-  const padding = 120;
-  const viewBoxWidth = metrics.width + padding * 2;
-  const viewBoxHeight = metrics.height + padding * 2;
-  const offsetX = padding - metrics.minX;
-  const offsetY = padding - metrics.minY;
-  const outlinePoints = metrics.points.map(([x, y]) => `${x + offsetX},${y + offsetY}`).join(' ');
-  const holes = (Array.isArray(item?.holes) ? item.holes : []).filter(poly => Array.isArray(poly) && poly.length >= 3);
-
-  const holeMarkup = holes.map(poly => {
-    const pts = poly.map(([x, y]) => `${(Number(x) || 0) + offsetX},${(Number(y) || 0) + offsetY}`).join(' ');
-    return `<polygon class="offcut-preview-hole" points="${pts}"></polygon>`;
-  }).join('');
-
-  const edgeLabels = metrics.edges.map(edge => {
-    const x = edge.midX + offsetX;
-    const y = edge.midY + offsetY;
-    return `<text class="offcut-preview-label" x="${x}" y="${y}" text-anchor="middle" dominant-baseline="middle">${fmtNum(edge.length, 1)}</text>`;
-  }).join('');
-
-  return `
-    <svg viewBox="0 0 ${viewBoxWidth} ${viewBoxHeight}" role="img" aria-label="Offcut ${escHtml(item?.offcutId || '')} preview">
-      <rect x="0" y="0" width="${viewBoxWidth}" height="${viewBoxHeight}" fill="#ffffff"></rect>
-      <polygon class="offcut-preview-shape" points="${outlinePoints}"></polygon>
-      ${holeMarkup}
-      ${edgeLabels}
-    </svg>`;
-}
-
-function openOffcutPreviewById(offcutId) {
-  const item = getOffcutItemById(offcutId);
-  if (!item) {
-    alert('Could not find that offcut. Please refresh and try again.');
-    return;
-  }
-
-  const titleEl = document.getElementById('offcut-preview-title');
-  const stageEl = document.getElementById('offcut-preview-stage');
-  if (titleEl) titleEl.innerText = `Offcut ${item.offcutId} (edge lengths in mm)`;
-  if (stageEl) stageEl.innerHTML = buildOffcutPreviewSvg(item);
-
-  new bootstrap.Modal(document.getElementById('offcutPreviewModal')).show();
-}
 
 function getOrderDisplayIds(orderObj, fallbackId = "") {
   const ids = Array.isArray(orderObj?.displayOrderIds) && orderObj.displayOrderIds.length
@@ -814,7 +667,7 @@ function updateBreadcrumbsForView(viewId) {
     for (const id of sortedIds) {
       const details = rawData[id];
       const custName = String(details.customer || "").trim();
-
+      
       // Identify type
       const isWorkshop = (custName.toLowerCase() === 'workshop stock');
 
@@ -869,16 +722,16 @@ function updateBreadcrumbsForView(viewId) {
       }
 
       // --- 4. THE FILTERING LOGIC (Your Request) ---
-
+      
       if (currentTab === 'active') {
           // Client Jobs: Must be Client AND Not Complete
           if (isWorkshop || isComplete) continue;
-      }
+      } 
       else if (currentTab === 'stock') {
           // Stock Builds: Must be Workshop AND Not Complete
           // (If complete, it disappears from app entirely)
           if (!isWorkshop || isComplete) continue;
-      }
+      } 
       else if (currentTab === 'history') {
           // History: Must be Client AND Complete
           // (Workshop jobs never appear here)
@@ -894,11 +747,11 @@ function updateBreadcrumbsForView(viewId) {
       if (currentTab === 'stock') {
           // --- STOCK CARD STYLE (Purple, Direct to Manufacturing) ---
           const manufPercent = orderRequired > 0 ? Math.round((orderManufactured / orderRequired) * 100) : 0;
-
+          
           card.style.borderLeft = "5px solid #764ba2"; // Distinct purple marker
           card.onclick = () => {
               // Open Dashboard (with hidden delivery)
-              openStockDashboard(id);
+              openStockDashboard(id); 
           };
 
           card.innerHTML = `
@@ -943,7 +796,7 @@ function updateBreadcrumbsForView(viewId) {
             </div>
           `;
       }
-
+      
       list.appendChild(card);
     }
 
@@ -1221,13 +1074,15 @@ function renderWoodStockManager() {
 
   if (!instockEl || !onorderEl || !offcutsEl) return;
 
-  const isSheet = (item) => !isOffcutItem(item);
+  const isOffcut = (item) => String(item.type || '').toLowerCase().includes('offcut');
+  const isSheet = (item) => !isOffcut(item);
 
+  // Filters
   const fullSheetsInStock = data.filter(i => isSheet(i) && (Number(i.qty) || 0) > 0);
-  const sheetsOnOrder = data.filter(i => isSheet(i) && (Number(i.onOrder) || 0) > 0);
-  const offcutsInStock = data.filter(i => isOffcutItem(i) && (Number(i.qty) || 0) > 0);
+  const sheetsOnOrder     = data.filter(i => isSheet(i) && (Number(i.onOrder) || 0) > 0);
+  const offcutsInStock    = data.filter(i => isOffcut(i) && (Number(i.qty) || 0) > 0);
 
-  const buildSheetTable = (rows, qtyMode) => {
+  const buildTable = (rows, qtyMode) => {
     if (!rows.length) return `<div class="text-center text-muted py-4">No items found.</div>`;
 
     let html = `
@@ -1245,32 +1100,57 @@ function renderWoodStockManager() {
           <tbody>`;
 
     rows.forEach(item => {
-      const qtyVal = qtyMode === 'onorder' ? (Number(item.onOrder) || 0) : (Number(item.qty) || 0);
+      const offcut = isOffcut(item);
+
+      const typeBadge = offcut
+        ? '<span class="badge bg-warning text-dark border border-warning-subtle" style="font-size:0.7rem;">OFFCUT</span>'
+        : '<span class="badge bg-secondary border border-secondary-subtle" style="font-size:0.7rem;">SHEET</span>';
+
+      const qtyVal = qtyMode === 'onorder'
+        ? (Number(item.onOrder) || 0)
+        : (Number(item.qty) || 0);
+
+      // Only On Order tab has a button (receive)
       const actionBtn = `
-        <div class="d-flex justify-content-end gap-2">
-          <button class="btn btn-outline-dark btn-sm px-2"
-                  onclick="openAdjustModal('wood', ${item.rowIndex}, '${qtyMode === 'onorder' ? 'onorder' : 'stock'}')"
-                  title="Adjust">
-            <strong>±</strong>
-          </button>
-          <button class="btn btn-outline-secondary btn-sm px-2"
-                  onclick="openStockHistory('wood', ${item.rowIndex})"
-                  title="History">
-            📖
-          </button>
-          ${qtyMode === 'onorder'
-            ? `<button class="btn btn-outline-success btn-sm px-2"
-                       onclick="openReceiveModal('wood', ${item.rowIndex})"
-                       title="Receive from On Order">📦</button>`
-            : ``}
-        </div>`;
+  <div class="d-flex justify-content-end gap-2">
+    <button class="btn btn-outline-dark btn-sm px-2"
+            onclick="openAdjustModal('wood', ${item.rowIndex}, '${qtyMode === 'onorder' ? 'onorder' : 'stock'}')"
+            title="Adjust">
+      <strong>±</strong>
+    </button>
+
+    <button class="btn btn-outline-secondary btn-sm px-2"
+            onclick="openStockHistory('wood', ${item.rowIndex})"
+            title="History">
+      📖
+    </button>
+
+    ${qtyMode === 'onorder'
+      ? `<button class="btn btn-outline-success btn-sm px-2"
+                 onclick="openReceiveModal('wood', ${item.rowIndex})"
+                 title="Receive from On Order">📦</button>`
+      : ``}
+  </div>`;
+
 
       html += `
         <tr class="wood-row">
-          <td class="ps-3"><span class="badge bg-secondary border border-secondary-subtle" style="font-size:0.7rem;">SHEET</span></td>
-          <td class="fw-bold text-dark" style="cursor:pointer;" onclick="openStockHistory('wood', ${item.rowIndex})">${escHtml(item.material || 'Unknown')}</td>
-          <td style="font-family:monospace;">${escHtml(item.size || '-')}</td>
-          <td class="text-center fw-bold fs-5" style="cursor:pointer;" onclick="openAdjustModal('wood', ${item.rowIndex}${qtyMode === 'onorder' ? ", 'onorder'" : ""})">${qtyVal}</td>
+          <td class="ps-3">${typeBadge}</td>
+
+          <!-- Tap material to view history (no button) -->
+          <td class="fw-bold text-dark" style="cursor:pointer;"
+              onclick="openStockHistory('wood', ${item.rowIndex})">
+            ${item.material || 'Unknown'}
+          </td>
+
+          <td style="font-family:monospace;">${item.size}</td>
+
+          <!-- Tap qty to adjust (stock or onorder depending on tab) -->
+          <td class="text-center fw-bold fs-5" style="cursor:pointer;"
+              onclick="openAdjustModal('wood', ${item.rowIndex}${qtyMode === 'onorder' ? ", 'onorder'" : ""})">
+            ${qtyVal}
+          </td>
+
           <td class="text-end pe-3">${actionBtn}</td>
         </tr>`;
     });
@@ -1279,11 +1159,1231 @@ function renderWoodStockManager() {
     return html;
   };
 
-  instockEl.innerHTML = buildSheetTable(fullSheetsInStock, 'stock');
-  onorderEl.innerHTML = buildSheetTable(sheetsOnOrder, 'onorder');
-  offcutsEl.innerHTML = buildOffcutTableHtml('stock', offcutsInStock);
+  // Render each container
+  instockEl.innerHTML = buildTable(fullSheetsInStock, 'stock');
+  onorderEl.innerHTML = buildTable(sheetsOnOrder, 'onorder');
+  offcutsEl.innerHTML = buildTable(offcutsInStock, 'stock');
 }
 
+
+  function openOrder(id) {
+    currentOrder = id;
+    document.getElementById('dash-customer').innerText = getOrderDisplayTitle(rawData[id], id);
+    renderCurrentOrderNotes(rawData[id]);
+    
+    // SHOW Delivery button for Clients
+    const delivBtn = document.getElementById('btn-dash-deliv');
+    if(delivBtn) delivBtn.classList.remove('hidden');
+
+    showView('view-dashboard');
+  }
+
+  function openStockDashboard(id) {
+    currentOrder = id;
+    document.getElementById('dash-customer').innerText = getOrderDisplayTitle(rawData[id], id);
+    renderCurrentOrderNotes(rawData[id]);
+
+    // HIDE Delivery button for Stock
+    const delivBtn = document.getElementById('btn-dash-deliv');
+    if(delivBtn) delivBtn.classList.add('hidden');
+
+    showView('view-dashboard');
+  }
+
+  // --- 2. MANUFACTURING FLOW ---
+  function openManufacturing() {
+  document.getElementById('manuf-customer').innerText = getOrderDisplayTitle(rawData[currentOrder], currentOrder);
+  const list = document.getElementById('product-list');
+  list.innerHTML = '';
+
+  const orderObj = rawData[currentOrder];
+
+  for (const prodName in orderObj.products) {
+    const prodData = orderObj.products[prodName];
+
+    const del = getDeliveryTotals(orderObj, prodName);
+    const required = getRequiredUnits(prodData, del.total);
+    const manufactured = Math.min(getManufacturedUnits(prodData), required);
+
+    const percent = required > 0 ? Math.round((manufactured / required) * 100) : 0;
+    const isComplete = (required > 0 && manufactured >= required);
+
+    const btn = document.createElement('div');
+    btn.className = 'card p-3 mb-2';
+    btn.onclick = () => showFork(prodName);
+
+    btn.innerHTML = `
+      <div class="d-flex justify-content-between align-items-center">
+        <div class="flex-grow-1" style="cursor:pointer">
+          <div class="fw-bold text-dark mb-1">${prodName}</div>
+          <div class="small text-muted">${required} Required — ${manufactured} Manufactured</div>
+          <div class="progress-track mt-2" style="height:4px;">
+            <div class="progress-fill" style="width:${percent}%; background: var(--color-pack-text);"></div>
+          </div>
+          ${isComplete ? `<div class="small text-success mt-1 fw-bold">Manufactured ✅</div>` : ``}
+        </div>
+
+        <div class="ms-3 ps-3 border-start d-flex gap-2">
+  ${!isComplete ? `
+    <button type="button"
+  class="btn btn-outline-dark btn-sm rounded-circle shadow-sm"
+  style="width:40px; height:40px;"
+  data-prod="${prodName.replace(/"/g,'&quot;')}"
+  onclick="openGateModal(event, this.dataset.prod)"
+  title="Why not manufactured?">
+  ℹ️
+</button>
+  ` : ``}
+
+  <button type="button"
+          class="btn btn-outline-secondary btn-sm rounded-circle shadow-sm"
+          style="width:40px; height:40px;"
+          onclick="triggerExport(event, '${prodName}')">
+    📄
+  </button>
+</div>
+
+      </div>
+    `;
+
+    list.appendChild(btn);
+  }
+
+  showView('view-manuf-list');
+}
+
+
+  function showFork(prodName) {
+    currentProduct = prodName;
+    document.getElementById('fork-product-name').innerText = prodName;
+    showView('view-fork');
+  }
+
+  // --- 3. DELIVERY FLOW ---
+  function openDelivery() {
+  document.getElementById('deliv-customer').innerText = getOrderDisplayTitle(rawData[currentOrder], currentOrder);
+  showView('view-delivery');
+  renderDeliverySummary();
+  switchDelivTab('bucket');
+}
+
+  function switchDelivTab(tab) {
+
+    currentDelivTab = tab;
+updateBreadcrumbsForView("view-delivery");
+
+    document.getElementById('tab-bucket').classList.toggle('active', tab==='bucket');
+    document.getElementById('tab-rooms').classList.toggle('active', tab==='rooms');
+    document.getElementById('deliv-bucket-view').classList.toggle('hidden', tab!=='bucket');
+    document.getElementById('deliv-rooms-view').classList.toggle('hidden', tab!=='rooms');
+    
+    renderDeliverySummary();
+
+if (tab === 'bucket') renderBucket();
+if (tab === 'rooms') renderRooms();
+
+  }
+
+  function renderBucket() {
+    computeDeliveryStatsForCurrentOrder();
+    const list = document.getElementById('bucket-list');
+    list.innerHTML = '';
+    const bucket = rawData[currentOrder].delivery.bucket || {};
+    
+    if(Object.keys(bucket).length === 0) {
+        list.innerHTML = '<div class="text-muted text-center py-3">Bucket Empty! All items assigned.</div>';
+        return;
+    }
+
+    for (const [prodName, data] of Object.entries(bucket)) {
+        if(data.qty > 0) {
+            const row = document.createElement('div');
+            row.className = 'd-flex justify-content-between align-items-center py-2 border-bottom';
+            const safeProd = norm(prodName);
+            const s = (deliveryStats.products && deliveryStats.products[safeProd]) ? deliveryStats.products[safeProd] : null;
+            const availTxt = s ? `Ready ${s.ready} • On site ${s.onSite} • Avail ${s.avail}` : "";
+
+row.innerHTML = `
+  <div>
+    <div class="fw-bold">${prodName}</div>
+    <div class="small text-muted">${availTxt}</div>
+  </div>
+  <span class="badge bg-secondary rounded-pill">${data.qty}</span>
+`;
+            list.appendChild(row);
+        }
+    }
+  }
+
+function renderRooms() {
+  computeDeliveryStatsForCurrentOrder();
+
+  const list = document.getElementById('rooms-list');
+  list.innerHTML = '';
+  const rooms = rawData[currentOrder]?.delivery?.rooms || {};
+
+  if (Object.keys(rooms).length === 0) {
+    list.innerHTML = '<div class="text-muted text-center py-5">No rooms created yet.<br>Click + to assign items.</div>';
+    return;
+  }
+
+  // Small HTML escape helper (prevents room/product names breaking the HTML)
+  const esc = (s) => String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+  const accordion = document.createElement('div');
+  accordion.className = 'accordion';
+  accordion.id = 'rooms-accordion';
+
+  // Optional: sort rooms alphabetically
+  const entries = Object.entries(rooms).sort((a,b) => String(a[0]).localeCompare(String(b[0])));
+
+  entries.forEach(([roomNameRaw, items], idx) => {
+    const roomName = norm(roomNameRaw);
+
+    // Room totals for header summary
+    const totalQty = items.reduce((sum, it) => sum + (Number(it.qty) || 0), 0);
+    const onSiteQty = items.reduce((sum, it) => {
+      const st = norm(it.status);
+      const q = Number(it.qty) || 0;
+      return sum + ((st === "Delivered" || st === "Fitted") ? q : 0);
+    }, 0);
+
+    const roomId = `room-${idx}`; // safe unique id
+
+    const rowsHtml = items.map(item => {
+      const safeProd = norm(item.name);
+      const s = (deliveryStats.products && deliveryStats.products[safeProd]) ? deliveryStats.products[safeProd] : null;
+      const availTxt = s ? `Ready ${s.ready} • On site ${s.onSite} • Avail ${s.avail}` : "";
+
+      const colorClass = 'sel-' + item.status;
+      const opts = ['Pending', 'Delivered', 'Fitted'];
+
+      let optionsHTML = opts.map(opt =>
+        `<option value="${opt}" ${norm(item.status) === opt ? 'selected' : ''}>${opt}</option>`
+      ).join('');
+
+      optionsHTML += `<option value="Bucket" style="color:red; font-weight:bold;">↩ Return to Bucket</option>`;
+
+      return `
+        <tr class="room-row">
+          <td class="text-center fw-bold" style="width:70px;">x${Number(item.qty) || 0}</td>
+          <td>
+            <div class="fw-bold text-dark">${esc(item.name)}</div>
+            <div class="small text-muted">${esc(availTxt)}</div>
+          </td>
+          <td class="text-end" style="width:170px;">
+            <select class="form-select status-select ${colorClass}"
+                    onchange="changeStatus(this, '${esc(roomName)}', '${esc(item.name)}', '${esc(item.status)}')">
+              ${optionsHTML}
+            </select>
+          </td>
+        </tr>
+      `;
+    }).join("");
+
+    const itemHtml = `
+      <div class="accordion-item border-0 mb-2 room-acc">
+        <h2 class="accordion-header" id="heading-${roomId}">
+          <button class="accordion-button collapsed room-acc-btn"
+                  type="button"
+                  data-bs-toggle="collapse"
+                  data-bs-target="#collapse-${roomId}"
+                  aria-expanded="false"
+                  aria-controls="collapse-${roomId}">
+            <div class="d-flex w-100 justify-content-between align-items-center">
+              <div class="fw-bold text-dark">${esc(roomName)}</div>
+              <div class="small text-muted">On site ${onSiteQty}/${totalQty}</div>
+            </div>
+          </button>
+        </h2>
+
+        <div id="collapse-${roomId}" class="accordion-collapse collapse"
+             aria-labelledby="heading-${roomId}"
+             data-bs-parent="#rooms-accordion">
+          <div class="accordion-body pt-2">
+            <div class="table-responsive">
+              <table class="table table-sm mb-0 align-middle room-table">
+                <thead class="bg-light">
+                  <tr class="text-secondary small">
+                    <th class="text-center" style="width:70px;">Qty</th>
+                    <th>Item</th>
+                    <th class="text-end" style="width:170px;">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${rowsHtml}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    const wrap = document.createElement('div');
+    wrap.innerHTML = itemHtml;
+    accordion.appendChild(wrap.firstElementChild);
+  });
+
+  list.appendChild(accordion);
+}
+
+function setRoomExportState(enabled, label) {
+  const btn = document.getElementById('room-export-btn');
+  if (!btn) return;
+  btn.innerText = label || '📄 Export to Google Sheets';
+  btn.disabled = !enabled;
+  btn.classList.toggle('opacity-75', !enabled);
+  btn.setAttribute('aria-busy', enabled ? 'false' : 'true');
+}
+
+function getBucketQtyForCurrentOrder() {
+  const bucket = rawData[currentOrder]?.delivery?.bucket || {};
+  return Object.values(bucket).reduce((sum, item) => sum + (Number(item?.qty) || 0), 0);
+}
+
+function exportRoomListToGoogleSheets() {
+  if (!currentOrder) {
+    alert('No order selected. Please open a job first.');
+    return;
+  }
+
+  const bucketQty = getBucketQtyForCurrentOrder();
+  if (bucketQty > 0) {
+    const proceed = confirm(
+      `Not all products have been given rooms (${bucketQty} remaining in Bucket). Are you sure you want to create the room list?`
+    );
+    if (!proceed) return;
+  }
+
+  setRoomExportState(false, 'Exporting…');
+
+  google.script.run
+    .withSuccessHandler(result => {
+      setRoomExportState(true, '📄 Export to Google Sheets');
+      if (!result || !result.url) {
+        alert('Room list exported, but no spreadsheet link was returned.');
+        return;
+      }
+      window.open(result.url, '_blank');
+    })
+    .withFailureHandler(err => {
+      setRoomExportState(true, '📄 Export to Google Sheets');
+      const message = err && err.message ? err.message : 'Export failed.';
+      alert(`Export failed: ${message}`);
+    })
+    .exportRoomListToSheets(getCurrentOrderIds());
+}
+
+
+  function changeStatus(selectEl, roomName, prodName, oldStatus) {
+  const newStatus = selectEl.value;
+
+  roomName = norm(roomName);
+prodName = norm(prodName);
+oldStatus = norm(oldStatus);
+
+const roomArr = rawData[currentOrder].delivery.rooms[roomName] || [];
+const idx = roomArr.findIndex(i => norm(i.name) === prodName && norm(i.status) === oldStatus);
+
+
+  if (idx < 0) {
+    alert("Could not find this item group.");
+    selectEl.value = oldStatus;
+    return;
+  }
+
+  const groupQty = Number(roomArr[idx].qty) || 0;
+  if (groupQty <= 0) {
+    selectEl.value = oldStatus;
+    return;
+  }
+
+  // Ask how many to move if qty > 1
+let qtyToMove = groupQty;
+if (groupQty > 1) {
+  const entered = prompt(`How many "${prodName}" in ${roomName} to set to "${newStatus}"? (1-${groupQty})`, "1");
+  if (entered === null) { selectEl.value = oldStatus; return; }
+
+  const n = parseInt(entered, 10);
+  if (!n || n < 1 || n > groupQty) { alert("Invalid quantity."); selectEl.value = oldStatus; return; }
+
+  qtyToMove = n;
+}
+
+// ✅ NORMALISE AFTER qtyToMove is final
+roomName = norm(roomName);
+prodName = norm(prodName);
+oldStatus = norm(oldStatus);
+
+// ✅ Always recompute stats
+computeDeliveryStatsForCurrentOrder();
+const s = deliveryStats.products ? deliveryStats.products[prodName] : null;
+
+// Only consume "Available" when moving INTO Delivered/Fitted from a non-onsite state
+const oldCountsOnSite = (oldStatus === "Delivered" || oldStatus === "Fitted");
+const newCountsOnSite = (newStatus === "Delivered" || newStatus === "Fitted");
+
+if (s && newCountsOnSite && !oldCountsOnSite) {
+  if (qtyToMove > s.avail) {
+    alert(
+      `⛔ Not enough available to set ${qtyToMove} to "${newStatus}".\n\n` +
+      `Factory ready: ${s.ready}\nOn site: ${s.onSite}\nAvailable: ${s.avail}\n\n` +
+      `Wait for manufacturing or reduce quantity.`
+    );
+    selectEl.value = oldStatus;
+    return;
+  }
+}
+  // Return to Bucket (partial supported)
+  if (newStatus === "Bucket") {
+    showStatus("Returning...", false);
+    const sourceOrderIds = getRoomItemSourceOrderIds(rawData[currentOrder], roomName, prodName, oldStatus);
+
+    // Update local model
+    roomArr[idx].qty -= qtyToMove;
+    if (roomArr[idx].qty <= 0) roomArr.splice(idx, 1);
+    if (roomArr.length === 0) delete rawData[currentOrder].delivery.rooms[roomName];
+
+    const bucket = rawData[currentOrder].delivery.bucket;
+    if (!bucket[prodName]) bucket[prodName] = { qty: 0, sourceOrderIds: [] };
+    bucket[prodName].qty += qtyToMove;
+    bucket[prodName].sourceOrderIds = Array.from(new Set([...(bucket[prodName].sourceOrderIds || []), ...sourceOrderIds]));
+
+    renderRooms();
+    renderDeliverySummary();
+    renderBucket();
+    showStatus("Returned!", true);
+
+    google.script.run.unassignFromRoom(sourceOrderIds, roomName, prodName, qtyToMove);
+    return;
+  }
+
+
+  // Normal status change (partial supported)
+  showStatus("Checking Factory...", false);
+
+  google.script.run
+    .withSuccessHandler(res => {
+      if (res === "SUCCESS") {
+        const sourceOrderIds = getRoomItemSourceOrderIds(rawData[currentOrder], roomName, prodName, oldStatus);
+
+        // Remove qty from the old group
+        const curQty = Number(roomArr[idx].qty) || 0;
+        roomArr[idx].qty = curQty - qtyToMove;
+
+        // If old group is empty, remove it
+        if (roomArr[idx].qty <= 0) roomArr.splice(idx, 1);
+
+        // Add qty to the new status group (merge if exists)
+        const safeNewStatus = norm(newStatus);
+
+         let existing = roomArr.find(i => norm(i.name) === prodName && norm(i.status) === safeNewStatus);
+         if (existing) {
+           existing.qty += qtyToMove;
+           existing.sourceOrderIds = Array.from(new Set([...(existing.sourceOrderIds || []), ...sourceOrderIds]));
+         } else {
+           roomArr.push({ name: prodName, qty: qtyToMove, status: safeNewStatus, sourceOrderIds: sourceOrderIds });
+         }
+        
+        if (roomArr.length === 0) delete rawData[currentOrder].delivery.rooms[roomName];
+
+        renderRooms();
+        renderDeliverySummary();
+        renderBucket();
+        showStatus("Saved", true);
+
+      } else if (res.startsWith("LIMIT_REACHED")) {
+        const parts = res.split(":");
+        const s = deliveryStats.products ? deliveryStats.products[norm(prodName)] : null;
+const extra = s
+  ? `\n\nFactory ready: ${s.ready}\nOn site: ${s.onSite}\nAvailable: ${s.avail}`
+  : "";
+
+alert(
+  `⛔ SAFETY STOP ⛔\n\nFactory has only packed ${parts[1]}.\nSite has already processed ${parts[2]}.\n\nWait for manufacturing.` +
+  extra
+);
+        selectEl.value = oldStatus;
+        showStatus("Blocked", true);
+      } else {
+        alert("Error: " + res);
+        selectEl.value = oldStatus;
+      }
+    })
+    .withFailureHandler(err => {
+      alert("Connection Error: " + err.message);
+      selectEl.value = oldStatus;
+    })
+    .updateDeliveryStatus(getRoomItemSourceOrderIds(rawData[currentOrder], roomName, prodName, oldStatus), roomName, prodName, oldStatus, newStatus, qtyToMove);
+}
+
+
+  // --- 4. ASSIGN MODAL ---
+  function openAssignModal() {
+    const bucket = rawData[currentOrder].delivery.bucket || {};
+    const rooms = rawData[currentOrder]?.delivery?.rooms || {};
+    const list = document.getElementById('assign-list');
+    list.innerHTML = '';
+    assignQueue = {};
+
+    const roomInput = document.getElementById('new-room-name');
+    const roomSelect = document.getElementById('existing-room-select');
+    roomInput.value = '';
+    roomSelect.innerHTML = '<option value="">+ Create / type a new room below</option>';
+
+    const seenRoomKeys = new Set();
+    Object.keys(rooms)
+      .sort((a, b) => String(a).localeCompare(String(b)))
+      .forEach(room => {
+        const canonical = canonicalRoomName(room);
+        const key = roomKey(canonical);
+        if (!key || seenRoomKeys.has(key)) return;
+        seenRoomKeys.add(key);
+
+        const opt = document.createElement('option');
+        opt.value = canonical;
+        opt.textContent = canonical;
+        roomSelect.appendChild(opt);
+      });
+
+    roomSelect.onchange = () => {
+      if (roomSelect.value) roomInput.value = roomSelect.value;
+    };
+
+    if(Object.keys(bucket).length === 0) {
+        list.innerHTML = '<div class="text-center text-muted">Nothing in bucket to assign!</div>';
+    } else {
+        for (const [prodName, data] of Object.entries(bucket)) {
+            if(data.qty > 0) {
+                const row = document.createElement('div');
+                row.className = 'd-flex justify-content-between align-items-center mb-3';
+                row.innerHTML = `
+                    <div style="flex:1;"><strong>${prodName}</strong><br><small class="text-muted">Avail: ${data.qty}</small></div>
+                    <div class="d-flex align-items-center bg-light rounded px-2">
+                        <div class="btn-squircle text-dark" style="font-size:1.5rem;" onclick="updateAssign('${prodName}', -1, ${data.qty})">−</div>
+                        <input id="assign-${prodName}" class="qty-input bg-light mx-2" value="0" readonly>
+                        <div class="btn-squircle text-dark" style="font-size:1.5rem;" onclick="updateAssign('${prodName}', 1, ${data.qty})">+</div>
+                    </div>
+                `;
+                list.appendChild(row);
+            }
+        }
+    }
+    new bootstrap.Modal(document.getElementById('assignModal')).show();
+  }
+
+  function updateAssign(prodName, change, max) {
+    let current = assignQueue[prodName] || 0;
+    let next = current + change;
+    if(next < 0) next = 0;
+    if(next > max) next = max;
+    assignQueue[prodName] = next;
+    document.getElementById('assign-'+prodName).value = next;
+  }
+
+  function commitAssignment() {
+    const selectedRoom = canonicalRoomName(document.getElementById('existing-room-select')?.value);
+    const typedRoom = canonicalRoomName(document.getElementById('new-room-name').value);
+    const roomInput = selectedRoom || typedRoom;
+
+    if(!roomInput) { alert("Please choose an existing room or enter a new Room Name"); return; }
+
+    const existingRoom = findExistingRoomName(roomInput);
+    const roomName = existingRoom || roomInput;
+
+    if (!selectedRoom && typedRoom && existingRoom && existingRoom !== typedRoom) {
+      const confirmed = confirm(`Use existing room \"${existingRoom}\" instead of creating \"${typedRoom}\"?`);
+      if (!confirmed) return;
+    }
+
+    let moves = [];
+    for(const [prod, qty] of Object.entries(assignQueue)) {
+        if(qty > 0) moves.push({ prod: prod, qty: qty });
+    }
+    if(moves.length === 0) { alert("Select at least one item."); return; }
+
+    const modalEl = document.getElementById('assignModal');
+    const modal = bootstrap.Modal.getInstance(modalEl);
+    const confirmBtn = document.getElementById('assign-confirm-btn');
+    if (confirmBtn) {
+      confirmBtn.disabled = true;
+      confirmBtn.textContent = 'Saving...';
+    }
+    showStatus("Assigning...", false);
+
+    let pending = moves.length;
+    let failed = false;
+
+    const finish = () => {
+      if (confirmBtn) {
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = 'Confirm Move ➔';
+      }
+    };
+
+    moves.forEach(m => {
+      const safeProd = norm(m.prod);
+      google.script.run
+        .withSuccessHandler((res) => {
+          const failedRes = typeof res === 'string' && res.toUpperCase().indexOf('ERROR') === 0;
+          if (failedRes) {
+            failed = true;
+            console.error('assignToRoom rejected:', res);
+          }
+
+          if (!failedRes) {
+            const bucket = rawData[currentOrder].delivery.bucket || {};
+            const sourceOrderIds = getBucketSourceOrderIds(rawData[currentOrder], safeProd);
+            if (!bucket[safeProd]) bucket[safeProd] = { qty: 0, sourceOrderIds: sourceOrderIds };
+            bucket[safeProd].qty -= m.qty;
+            if (bucket[safeProd].qty <= 0) delete bucket[safeProd];
+            rawData[currentOrder].delivery.bucket = bucket;
+
+            if (!rawData[currentOrder].delivery.rooms) rawData[currentOrder].delivery.rooms = {};
+            if (!rawData[currentOrder].delivery.rooms[roomName]) rawData[currentOrder].delivery.rooms[roomName] = [];
+
+            const roomItems = rawData[currentOrder].delivery.rooms[roomName];
+            const existing = roomItems.find(i => norm(i.name) === safeProd && norm(i.status) === 'Pending');
+            if (existing) {
+              existing.qty = (Number(existing.qty) || 0) + m.qty;
+              existing.sourceOrderIds = Array.from(new Set([...(existing.sourceOrderIds || []), ...sourceOrderIds]));
+            } else {
+              roomItems.push({ name: safeProd, qty: m.qty, status: 'Pending', sourceOrderIds: sourceOrderIds });
+            }
+          }
+
+          pending--;
+          if (pending === 0) {
+            finish();
+            if (failed) {
+              showStatus('Assignment failed. Refreshing data...', false);
+              google.script.run.withSuccessHandler(onDataLoad).getDataTree();
+              alert('Some assignments failed to save. Data has been refreshed from server.');
+              return;
+            }
+
+            modal.hide();
+            showStatus('Assigned!', true);
+            renderBucket();
+            renderRooms();
+            renderDeliverySummary();
+          }
+        })
+        .withFailureHandler((err) => {
+          failed = true;
+          console.error('assignToRoom error:', err);
+          pending--;
+          if (pending === 0) {
+            finish();
+            showStatus('Assignment failed. Refreshing data...', false);
+            google.script.run.withSuccessHandler(onDataLoad).getDataTree();
+            alert('Some assignments failed to save. Data has been refreshed from server.');
+          }
+        })
+        .assignToRoom(getBucketSourceOrderIds(rawData[currentOrder], safeProd), safeProd, m.qty, roomName);
+    });
+  }
+
+  // --- 5. MANUFACTURING RENDERERS ---
+  
+  // NEW: FILTER LIST FUNCTION
+  function filterList(inputId, itemClass) {
+    const filter = document.getElementById(inputId).value.toUpperCase();
+    // Get all rows with the class
+    const rows = document.getElementsByClassName(itemClass);
+    
+    for (let i = 0; i < rows.length; i++) {
+      // For tables, we look at the whole row text
+      const txtValue = rows[i].textContent || rows[i].innerText;
+      if (txtValue.toUpperCase().indexOf(filter) > -1) {
+        rows[i].style.display = ""; // Show
+      } else {
+        rows[i].style.display = "none"; // Hide
+
+        // If we are filtering panels, hide any material groups that now have no visible cards
+      if (itemClass === 'panel-row-menu') {
+  document.querySelectorAll('.material-group').forEach(g => {
+    const cards = g.querySelectorAll('.panel-row-menu');
+    const anyVisible = Array.from(cards).some(c => c.style.display !== "none");
+    g.style.display = anyVisible ? "" : "none";
+  });
+}
+
+      }
+    }
+  }
+
+  // NEW: BATCH COMPLETE (FILL MAX)
+  function fillMax(rowIdx, type) {
+    if(!confirm("Mark ALL as complete for this stage?")) return;
+
+    let panelData = null;
+    const productObj = rawData[currentOrder].products[currentProduct];
+    if (productObj && productObj.panels) {
+        productObj.panels.forEach(p => { if(p.rowIndex == rowIdx) panelData = p; });
+    }
+    if (!panelData) return;
+
+    const input = document.getElementById(type + '-' + rowIdx);
+    if(!input) return;
+    
+    const currentVal = parseInt(input.value) || 0;
+    const maxVal = panelData.qtyOrder; 
+    const diff = maxVal - currentVal;
+    
+    if(diff > 0) {
+        update(rowIdx, type, diff);
+    } else {
+        alert("Already full!");
+    }
+  }
+
+  // --- REPLACED: openPanels (Now renders a Menu) ---
+  function openPanels() {
+  document.getElementById('panel-prod-name').innerText = currentProduct;
+  const list = document.getElementById('panel-list');
+  list.innerHTML = '';
+
+  const productObj = rawData[currentOrder]?.products?.[currentProduct];
+  const panels = productObj?.panels || [];
+  if (!panels.length) {
+    list.innerHTML = `<div class="text-center text-muted py-4">No panels for this product.</div>`;
+    showView('view-panels');
+    return;
+  }
+
+  // Group by material
+  const groups = {};
+  panels.forEach(p => {
+    const mat = norm(p.material) || "Unspecified Material";
+    if (!groups[mat]) groups[mat] = [];
+    groups[mat].push(p);
+  });
+
+  // Sort material groups A→Z
+  const mats = Object.keys(groups).sort((a, b) => a.localeCompare(b));
+
+  mats.forEach(mat => {
+    // Group wrapper (important: class material-group used for search tidy)
+    const groupWrap = document.createElement('div');
+    groupWrap.className = "material-group mb-4";
+
+    // Group header
+    const header = document.createElement('div');
+    header.className = "px-2 mb-2";
+    header.innerHTML = `
+      <div class="fw-bold text-dark">${mat}</div>
+      <div class="small text-muted">${groups[mat].length} panel type(s)</div>
+    `;
+    groupWrap.appendChild(header);
+
+    // Sort panels inside each group by name
+    groups[mat].sort((a, b) => String(a.panelName).localeCompare(String(b.panelName)));
+
+    // Render each panel card (same style you already had)
+    groups[mat].forEach(p => {
+      const req = Number(p.qtyOrder) || 0;
+      const cut = Number(p.qtyCut) || 0;
+      const proc = Number(p.qtyProcessed) || 0;
+      const fin = Number(p.qtyEdgeFinish) || 0;
+      const pack = Number(p.qtyPacked) || 0;
+      const damageInfo = getPanelDamageInfo(p, productObj);
+
+      const progressUnits = Math.min(cut, req) + Math.min(proc, req) + Math.min(fin, req) + Math.min(pack, req);
+      const totalUnits = req * 4;
+      const percent = totalUnits > 0 ? Math.round((progressUnits / totalUnits) * 100) : 0;
+      const isDone = (req > 0 && pack >= req);
+
+      const row = document.createElement('div');
+      row.className = 'card p-3 mb-2 panel-row-menu shadow-sm border-0';
+      row.style.cursor = 'pointer';
+      row.onclick = () => openSinglePanel(p.rowIndex);
+
+      // NOTE: visually-hidden makes material searchable without cluttering the UI
+      row.innerHTML = `
+        <span class="visually-hidden">${mat}</span>
+        <div class="d-flex justify-content-between align-items-center">
+          <div>
+            <div class="fw-bold text-dark" style="font-size: 1.1rem;">${p.panelName}</div>
+            <div class="small text-muted">Required: ${damageInfo.required} • Damaged: ${damageInfo.damaged} • Total: ${damageInfo.total}</div>
+            <div class="small text-muted mt-1">
+              ${cut} Cut — ${proc} CNC'd — ${fin} Edge Finished — ${pack} Packed
+            </div>
+          </div>
+          <div class="d-flex align-items-center">
+            <div class="panel-row-actions">
+              <button class="damage-btn" title="Mark damaged" onclick="openDamageModal(event, ${p.rowIndex})">⚠️</button>
+              ${isDone ? '<span class="badge bg-success rounded-pill">Packed ✅</span>' : ''}
+            </div>
+            <div class="text-muted ms-2" style="font-size: 1.5rem;">➔</div>
+          </div>
+        </div>
+        <div class="progress-track mt-2" style="height: 4px;">
+          <div class="progress-fill" style="width:${percent}%; background: var(--color-pack-text);"></div>
+        </div>
+      `;
+
+      groupWrap.appendChild(row);
+    });
+
+    list.appendChild(groupWrap);
+  });
+
+  showView('view-panels');
+}
+
+
+  // --- NEW: openSinglePanel (Renders the Controls) ---
+  function openSinglePanel(rowIdx) {
+     let panelData = null;
+     const productObj = rawData[currentOrder].products[currentProduct];
+     
+     // Find the panel data based on rowIndex
+     if (productObj && productObj.panels) {
+        productObj.panels.forEach(p => { if(p.rowIndex == rowIdx) panelData = p; });
+     }
+     
+     if(!panelData) { alert("Panel data not found"); return; }
+
+     currentPanelName = norm(panelData.panelName);
+
+     const damageInfo = getPanelDamageInfo(panelData, productObj);
+
+     // Update Header
+     document.getElementById('single-panel-name').innerText = panelData.panelName;
+     document.getElementById('single-panel-sku').innerText = `Required: ${damageInfo.required} • Damaged: ${damageInfo.damaged} • Total: ${damageInfo.total}`;
+
+     // Render Controls into the new container
+     const container = document.getElementById('single-panel-controls');
+     container.innerHTML = `
+        <div class="mb-4">
+           ${renderControl('Cut', 'cut', panelData.qtyCut, panelData.rowIndex, 'btn-cut')}
+        </div>
+        <div class="mb-4">
+           ${renderControl("CNC'd", 'processed', panelData.qtyProcessed, panelData.rowIndex, 'btn-proc')}
+        </div>
+        <div class="mb-4">
+           ${renderControl('Edge Finished', 'edgeFinish', panelData.qtyEdgeFinish, panelData.rowIndex, 'btn-finish')}
+        </div>
+        <div class="mb-4">
+           ${renderControl('Packed', 'packed', panelData.qtyPacked, panelData.rowIndex, 'btn-pack')}
+        </div>
+        <button class="btn btn-warning w-100 rounded-pill fw-bold" onclick="openDamageModal(null, ${panelData.rowIndex})">
+          ⚠️ Mark Damaged Panel
+        </button>
+     `;
+
+     showView('view-single-panel');
+  }
+
+  function openComponents() {
+  document.getElementById('comp-prod-name').innerText = currentProduct;
+  const list = document.getElementById('comp-list');
+  list.innerHTML = '';
+
+  const comps = rawData[currentOrder].products[currentProduct].components || [];
+  if (!comps.length) {
+    list.innerHTML = '<div class="p-4 text-center text-muted">No components.</div>';
+    showView('view-comps');
+    return;
+  }
+
+  comps.forEach(c => {
+    const req = Number(c.qtyRequired) || 0;
+    const packed = Number(c.qtyPacked) || 0;
+    const per = Number(c.qtyPerUnit) || 1;
+
+    const percent = req > 0 ? Math.round((packed / req) * 100) : 0;
+
+    const row = document.createElement('div');
+    row.className = 'card p-3 mb-2 border-0 shadow-sm';
+
+    row.innerHTML = `
+      <div class="d-flex justify-content-between align-items-center">
+        <div style="flex:1; padding-right:12px;">
+          <div class="fw-bold text-dark">${c.compName}</div>
+          <div class="small text-muted">${c.sku} • ${per} per unit • Required ${req}</div>
+        </div>
+
+        <div class="d-flex align-items-center">
+          <button type="button" class="btn-squircle btn-faded" onclick="compStep(event, ${c.rowIndex}, -1)">−</button>
+          <input type="number"
+                 id="comp-packed-${c.rowIndex}"
+                 class="qty-input"
+                 value="${packed}"
+                 style="width:60px;"
+                 onchange="compSetExact(event, ${c.rowIndex}, this.value)">
+          <button type="button" class="btn-squircle btn-pack" onclick="compStep(event, ${c.rowIndex}, 1)">+</button>
+        </div>
+      </div>
+
+      <div class="progress-track mt-2" style="height: 4px;">
+        <div class="progress-fill" style="width:${percent}%; background: var(--color-pack-text);"></div>
+      </div>
+
+      <div class="small text-muted mt-2">${packed} packed / ${req} required</div>
+    `;
+
+    list.appendChild(row);
+  });
+
+  showView('view-comps');
+}
+
+
+  function renderControl(label, type, val, rowIdx, colorClass) {
+    return `
+    <div class="qty-control-row">
+      <div class="d-flex align-items-center">
+        <span class="label-text me-2">${label}</span>
+        <small class="text-muted" style="cursor:pointer; font-size:1.1rem;" onclick="showInfo('${type}', '${label}')">ⓘ</small>
+      </div>
+      
+      <div class="d-flex align-items-center">
+        <div class="qty-wrapper me-2">
+          <button type="button" class="btn-squircle btn-faded" onclick="tapUpdate(event, ${rowIdx}, '${type}', -1)">−</button>
+          <input type="number" id="${type}-${rowIdx}" class="qty-input" value="${val}" readonly>
+          <button type="button" class="btn-squircle ${colorClass}" onclick="tapUpdate(event, ${rowIdx}, '${type}', 1)">+</button>
+        </div>
+        
+        <button class="btn btn-light btn-sm shadow-sm border rounded-circle" 
+                style="width:32px; height:32px; padding:0; line-height:1;" 
+                onclick="tapFillMax(event, ${rowIdx}, '${type}')" 
+                title="Complete All">
+           ↠
+        </button>
+      </div>
+    </div>`;
+  }
+
+  function showInfo(type, title) {
+    const text = descriptions[type] || "No description available.";
+    document.getElementById('modalTitle').innerText = title;
+    document.getElementById('modalBody').innerHTML = text;
+    new bootstrap.Modal(document.getElementById('infoModal')).show();
+  }
+
+  function tapUpdate(e, rowIdx, type, change) {
+  if (e) { e.preventDefault(); e.stopPropagation(); }
+  update(rowIdx, type, change);
+}
+
+function tapFillMax(e, rowIdx, type) {
+  if (e) { e.preventDefault(); e.stopPropagation(); }
+  fillMax(rowIdx, type);
+}
+
+function openDamageModal(e, rowIdx) {
+  if (e) { e.preventDefault(); e.stopPropagation(); }
+  const productObj = rawData?.[currentOrder]?.products?.[currentProduct];
+  const panelData = productObj?.panels?.find(p => String(p.rowIndex) === String(rowIdx));
+  if (!panelData) {
+    alert("Panel data not found.");
+    return;
+  }
+
+  currentDamageRowIndex = rowIdx;
+  const metaEl = document.getElementById("damage-panel-meta");
+  if (metaEl) {
+    metaEl.textContent = `${panelData.panelName} • ${currentProduct}`;
+  }
+  const qtyInput = document.getElementById("damage-qty");
+  const reasonInput = document.getElementById("damage-reason");
+  if (qtyInput) qtyInput.value = "1";
+  if (reasonInput) reasonInput.value = "";
+
+  new bootstrap.Modal(document.getElementById("damageModal")).show();
+}
+
+function submitDamage() {
+  const qtyInput = document.getElementById("damage-qty");
+  const reasonInput = document.getElementById("damage-reason");
+  const qty = Number(qtyInput ? qtyInput.value : 0);
+  const reason = String(reasonInput ? reasonInput.value : "").trim();
+
+  if (!currentDamageRowIndex) {
+    alert("Missing panel reference.");
+    return;
+  }
+  if (!qty || qty <= 0) {
+    alert("Enter a valid damaged quantity.");
+    return;
+  }
+  if (!reason) {
+    alert("Please enter a reason for the damage.");
+    return;
+  }
+
+  showStatus("Recording damage...", false);
+
+  google.script.run
+    .withSuccessHandler(() => {
+      showStatus("Damage recorded", true);
+      const modalEl = document.getElementById("damageModal");
+      const modal = modalEl ? bootstrap.Modal.getInstance(modalEl) : null;
+      if (modal) modal.hide();
+      reloadAllData();
+    })
+    .withFailureHandler((err) => {
+      showStatus("Not saved", true);
+      alert("Failed to record damage: " + (err && err.message ? err.message : err));
+    })
+    .markPanelDamaged(currentDamageRowIndex, qty, reason);
+}
+
+
+  function update(rowIdx, type, change) {
+    const input = document.getElementById(type + '-' + rowIdx); 
+    if (!input) return;
+    
+    let currentVal = parseInt(input.value) || 0; // Safety: default to 0 if empty
+    let newVal = currentVal + change;
+    
+    let panelData = null;
+    const productObj = rawData[currentOrder].products[currentProduct];
+    if (productObj && productObj.panels) {
+        productObj.panels.forEach(p => { if(p.rowIndex == rowIdx) panelData = p; });
+    }
+    if (!panelData) return; 
+    
+    if (newVal < 0) return; 
+    if (type === 'cut' && newVal > panelData.qtyOrder) return; 
+
+    const getVal = (id) => { 
+        const el = document.getElementById(id + '-' + rowIdx); 
+        return el ? parseInt(el.value) : 0; 
+    };
+
+    // 1. FORWARD LOGIC
+    if (change > 0) {
+        if (type === 'processed' && newVal > getVal('cut')) { alert("⚠️ Restriction: You must CUT these panels first."); return; }
+        if (type === 'edgeFinish' && newVal > getVal('cut')) { alert("⚠️ Restriction: You must CUT these panels first."); return; }
+        if (type === 'packed' && newVal > getVal('processed')) { alert("⚠️ Restriction: Packed quantity cannot exceed CNC'd quantity."); return; }
+        if (type === 'packed' && newVal > getVal('edgeFinish')) { alert("⚠️ Restriction: Packed quantity cannot exceed Edge Finished quantity."); return; }
+    }
+
+    // 2. BACKWARD LOGIC
+    if (change < 0) {
+        if (type === 'cut' && newVal < getVal('processed')) { alert("⛔ Blocked: Reduce 'CNC\'d' count first."); return; }
+        if (type === 'cut' && newVal < getVal('edgeFinish')) { alert("⛔ Blocked: Reduce 'Edge Finished' count first."); return; }
+        if (type === 'cut' && newVal < getVal('packed')) { alert("⛔ Blocked: Reduce 'Packed' count first."); return; }
+        if (type === 'processed' && newVal < getVal('packed')) { alert("⛔ Blocked: Reduce 'Packed' count first."); return; }
+        if (type === 'edgeFinish' && newVal < getVal('packed')) { alert("⛔ Blocked: Reduce 'Packed' count first."); return; }
+    }
+    
+    input.value = newVal;
+    if (type === 'cut') panelData.qtyCut = newVal;
+    if (type === 'processed') panelData.qtyProcessed = newVal;
+    if (type === 'edgeFinish') panelData.qtyEdgeFinish = newVal;
+    if (type === 'packed') panelData.qtyPacked = newVal;
+
+    showStatus("Saving...", false);
+
+const key = `${rowIdx}-${type}`;
+if (!pendingUpdates[key]) {
+  // base = value BEFORE any unsaved changes for this key
+  pendingUpdates[key] = {
+    rowIndex: rowIdx,
+    colName: type,
+    base: currentVal,
+    delta: 0,
+    opId: makeOpId(),
+    ts: Date.now()
+  };
+}
+pendingUpdates[key].delta = Number(pendingUpdates[key].delta || 0) + Number(change || 0);
+pendingUpdates[key].ts = Date.now();
+
+markUnsaved();
+
+if (saveTimer) clearTimeout(saveTimer);
+saveTimer = setTimeout(sendQueueToServer, 500);
+
+  }
+
+  function sendQueueToServer() {
+  if (saveInFlight) {
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(sendQueueToServer, 300);
+    return;
+  }
+
+  const sending = pendingUpdates || {};
+  const payload = Object.values(sending);
+
+  if (!payload.length) {
+    clearUnsavedIfEmptyQueues();
+    return;
+  }
+
+  // Move current queue to in-flight buffer so new clicks don’t get deleted/overwritten
+  inFlightUpdates = sending;
+  pendingUpdates = {};
+
+  saveInFlight = true;
+  showStatus("Saving.", false);
+
+  google.script.run
+    .withSuccessHandler((res) => {
+      saveInFlight = false;
+
+      if (!Array.isArray(res)) {
+        // Restore anything we were trying to send (unless newer edits already exist)
+        for (const k in inFlightUpdates) if (!pendingUpdates[k]) pendingUpdates[k] = inFlightUpdates[k];
+        inFlightUpdates = {};
+        markUnsaved("Not saved: unexpected server response.");
+        showStatus("Not saved", true);
+        return;
+      }
+
+      res.forEach(r => {
+        const key = `${r.rowIndex}-${r.colName}`;
+        delete inFlightUpdates[key];
+
+        // If user changed this again while we were saving, DON’T overwrite their newer value
+        if (pendingUpdates[key]) return;
+
+        const el = document.getElementById(`${r.colName}-${r.rowIndex}`);
+        if (el && r.value !== undefined) el.value = r.value;
+
+        // Update local model only if there’s no newer pending change
+        const prod = rawData?.[currentOrder]?.products?.[currentProduct];
+        const p = prod?.panels?.find(x => String(x.rowIndex) === String(r.rowIndex));
+        if (p && r.value !== undefined) {
+          if (r.colName === "cut") p.qtyCut = r.value;
+          if (r.colName === "processed") p.qtyProcessed = r.value;
+          if (r.colName === "edgeFinish") p.qtyEdgeFinish = r.value;
+          if (r.colName === "packed") p.qtyPacked = r.value;
+        }
+      });
+
+      // If new changes arrived while saving, flush again immediately
+      if (Object.keys(pendingUpdates).length > 0) {
+        if (saveTimer) clearTimeout(saveTimer);
+        saveTimer = setTimeout(sendQueueToServer, 0);
+        markUnsaved();
+        return;
+      }
+
+      clearUnsavedIfEmptyQueues();
+      showStatus("Saved", true);
+    })
+    .withFailureHandler((err) => {
+      saveInFlight = false;
+      setHealthBadge(false);
+
+      // Restore in-flight items that don’t have newer versions
+      for (const k in inFlightUpdates) if (!pendingUpdates[k]) pendingUpdates[k] = inFlightUpdates[k];
+      inFlightUpdates = {};
+
+      markUnsaved("Not saved (connection/server issue).");
+      showStatus("Not saved", true);
+      console.log("processBatch failed:", err);
+    })
+    .processBatch(payload);
+}
+
+
+
+
+  // --- NEW: TRIGGER XML EXPORT ---
+  function triggerExport(evt, prodName) {
+  if (evt) evt.stopPropagation();
+
+    if(!confirm(`Generate CNC XML file for ${prodName}?`)) return;
+    const orderObj = rawData[currentOrder];
+    const sourceOrderIds = getProductSourceOrderIds(orderObj, prodName);
+    
+    showStatus("Generating XML...", false);
+    
+    google.script.run
+      .withSuccessHandler(res => {
+         alert(res); // "Saved to Drive: CNC_1006_Cabinet.xml"
+         showStatus("Done", true);
+      })
+      .withFailureHandler(err => {
+         alert("Error: " + err.message);
+         showStatus("Error", false);
+      })
+      .exportCncXml(sourceOrderIds, prodName);
+  }
+  
+  function toggleComponent(rowIdx, rowEl) {
+    const isPacked = rowEl.classList.contains('packed');
+    const newState = !isPacked;
+    if (newState) rowEl.classList.add('packed'); else rowEl.classList.remove('packed');
+    rowEl.querySelector('.chk-circle').innerHTML = newState ? '✔' : '';
+    google.script.run.updateComponentStatus(rowIdx, newState);
+  }
+
+  function showStatus(msg, fadeOut) {
+    const el = document.getElementById('save-status'); el.innerText = msg; el.classList.add('visible');
+    if (fadeOut) setTimeout(() => el.classList.remove('visible'), 2000);
+  }
+
+  // --- INVENTORY LOGIC ---
+
+  function openComponentStock(refresh = true) {
+  const list = document.getElementById('stock-comp-list');
+  if (!list) return;
+
+  if (refresh) {
+    list.innerHTML = '<div class="text-center text-muted py-4">Loading...</div>';
+    refreshInventoryData(() => openComponentStock(false));
+    return;
+  }
+
+  if (!stockData.components) { list.innerHTML = 'Loading...'; return; }
+
+  let html = `
+    <div class="table-responsive bg-white rounded shadow-sm border">
+      <table class="table table-hover align-middle mb-0 text-start">
+        <thead class="bg-light">
+          <tr class="text-secondary small text-uppercase">
+            <th class="ps-3">Item</th>
+            <th>SKU</th>
+            <th>Category</th>
+            <th class="text-center">Qty</th>
+            <th class="text-end pe-3">Action</th>
+          </tr>
+        </thead>
+        <tbody>`;
+
+  stockData.components.forEach(item => {
+    const key = `Component: ${item.sku} | ${item.name}`;
+
+    html += `
+      <tr class="stock-row">
+        <td class="ps-3 fw-bold text-dark">${item.name}</td>
+        <td class="text-muted" style="font-family:monospace;">${item.sku}</td>
+        <td class="text-muted">${item.category || ''}</td>
+        <td class="text-center fw-bold fs-5">${item.stock}</td>
+        <td class="text-end pe-3">
+          <div class="d-flex justify-content-end gap-2">
+            <button class="btn btn-outline-dark btn-sm px-2"
+                    onclick="openAdjustModal('comp', ${item.rowIndex})"
+                    title="Adjust Stock (Add/Remove)">
+              <strong>±</strong>
+            </button>
+            <button class="btn btn-outline-secondary btn-sm px-2"
+                    onclick="openStockHistory('comp', ${item.rowIndex})"
+                    title="View Change Log">
+              📖
+            </button>
+          </div>
+        </td>
+      </tr>`;
+  });
+
+  html += `</tbody></table></div>`;
+  list.innerHTML = html;
+}
 
 
 function openCNCNester() {
@@ -1312,14 +2412,22 @@ function openCNCNester() {
 
 
   function renderWoodStock(customData = null, forceContext = null) {
+  // CNC containers (new)
   const cncSheetsEl = document.getElementById('wood-stock-list-sheets');
   const cncOffcutsEl = document.getElementById('wood-stock-list-offcuts');
+
+  // CNC container (old fallback)
   const list = document.getElementById('wood-stock-list');
+
+  // Manager container (your old one; if it exists we still support it)
   const manageList = document.getElementById('stock-wood-list');
 
+  // Prefer passed data, else CNC cached data, else full stock
   const dataToRender = customData || cncWoodViewData || stockData.wood || [];
 
-  const generateSheetTable = (context, rows) => {
+  const isOffcut = (item) => String(item.type || '').toLowerCase().includes('offcut');
+
+  const generateTable = (context, rows) => {
     if (!rows || rows.length === 0) return '<div class="text-center p-4 text-muted">No Data</div>';
 
     let html = `
@@ -1337,9 +2445,14 @@ function openCNCNester() {
           <tbody>`;
 
     rows.forEach(item => {
+      const offcut = isOffcut(item);
+      const typeBadge = offcut
+        ? '<span class="badge bg-warning text-dark border border-warning-subtle" style="font-size:0.7rem;">OFFCUT</span>'
+        : '<span class="badge bg-secondary border border-secondary-subtle" style="font-size:0.7rem;">SHEET</span>';
+
       let actionBtn = '';
       if (context === 'cnc') {
-        actionBtn = `<button class="btn btn-dark btn-sm rounded-pill px-3 fw-bold" onclick="openAllocateModal(${jsStr(item.rowIndex)})">ALLOCATE</button>`;
+        actionBtn = `<button class="btn btn-dark btn-sm rounded-pill px-3 fw-bold" onclick="openAllocateModal(${item.rowIndex})">ALLOCATE</button>`;
       } else {
         actionBtn = `
           <div class="d-flex justify-content-end gap-2">
@@ -1357,9 +2470,9 @@ function openCNCNester() {
 
       html += `
         <tr class="wood-row">
-          <td class="ps-3"><span class="badge bg-secondary border border-secondary-subtle" style="font-size:0.7rem;">SHEET</span></td>
-          <td class="fw-bold text-dark">${escHtml(item.material || 'Unknown')}</td>
-          <td style="font-family:monospace;">${escHtml(item.size || '-')}</td>
+          <td class="ps-3">${typeBadge}</td>
+          <td class="fw-bold text-dark">${item.material || 'Unknown'}</td>
+          <td style="font-family:monospace;">${item.size}</td>
           <td class="text-center fw-bold fs-5">${Number(item.qty) || 0}</td>
           <td class="text-end pe-3">${actionBtn}</td>
         </tr>`;
@@ -1369,26 +2482,47 @@ function openCNCNester() {
     return html;
   };
 
+  // ✅ CNC (NEW): If the split containers exist, render sheets + offcuts separately
   if ((forceContext === 'cnc' || !forceContext) && cncSheetsEl && cncOffcutsEl) {
-    const sheets = dataToRender.filter(x => !isOffcutItem(x) && (Number(x.qty) || 0) > 0);
-    const offcuts = dataToRender.filter(x => isOffcutItem(x) && (Number(x.qty) || 0) > 0);
+    const sheets = dataToRender.filter(x => !isOffcut(x) && (Number(x.qty) || 0) > 0);
+    const offcuts = dataToRender.filter(x => isOffcut(x) && (Number(x.qty) || 0) > 0);
 
-    cncSheetsEl.innerHTML = generateSheetTable('cnc', sheets);
-    cncOffcutsEl.innerHTML = buildOffcutTableHtml('cnc', offcuts);
+    cncSheetsEl.innerHTML = generateTable('cnc', sheets);
+    cncOffcutsEl.innerHTML = generateTable('cnc', offcuts);
+
+    // keep whichever tab is selected visible
     switchCncWoodSubTab(currentCncWoodSubTab || 'sheets');
   }
+  // ✅ CNC (OLD fallback): if you still have the old single list container somewhere
   else if ((forceContext === 'cnc' || !forceContext) && list) {
-    list.innerHTML = generateSheetTable('cnc', dataToRender.filter(x => !isOffcutItem(x)));
+    list.innerHTML = generateTable('cnc', dataToRender);
   }
-  else if ((forceContext === 'manager' || !forceContext) && manageList) {
-    manageList.innerHTML = generateSheetTable('manager', dataToRender.filter(x => !isOffcutItem(x)));
+
+  // ✅ Manager view (unchanged behaviour)
+  if (manageList && !customData) {
+    manageList.innerHTML = generateTable('manage', dataToRender);
   }
 }
 
+  
+  function switchCNCTab(tab) {
+
+    currentCncTab = tab;
+updateBreadcrumbsForView("view-cnc");
+
+      document.getElementById('tab-cnc-load').classList.toggle('active', tab==='load');
+      document.getElementById('tab-cnc-scan').classList.toggle('active', tab==='scan');
+      document.getElementById('cnc-load-view').classList.toggle('hidden', tab!=='load');
+      document.getElementById('cnc-scan-view').classList.toggle('hidden', tab!=='scan');
+  }
+
+  // --- ACTIONS ---
+
+  // --- ACTIONS (CORRECTED) ---
 
   function adjustStock(type, rowIndex, change) {
       showStatus("Updating...", false);
-
+      
       // 1. Handle Components
       if(type === 'comp') {
           google.script.run.withSuccessHandler(res => {
@@ -1417,14 +2551,14 @@ function openCNCNester() {
   function adjustStockManual(type, rowIndex) {
       const val = prompt("Enter quantity to ADD (positive) or REMOVE (negative):");
       const num = parseInt(val);
-
+      
       if (isNaN(num) || num === 0) return; // Cancelled or invalid
-
+      
       const reason = prompt("Reason? (e.g., Restock, Damaged, Correction)", "Manual Update");
       if (!reason) return; // Cancelled
 
       showStatus("Updating...", false);
-
+      
       // 1. Handle Components
       if(type === 'comp') {
           google.script.run.withSuccessHandler(res => {
@@ -1452,7 +2586,7 @@ function openCNCNester() {
 
   function loadToBed(rowIndex, materialName) {
       if(!confirm(`Confirm loading 1 sheet of ${materialName}?`)) return;
-
+      
       showStatus("Loading...", false);
       google.script.run.withSuccessHandler(res => {
           showStatus("Stock Updated", true);
@@ -1482,18 +2616,23 @@ function openCNCNester() {
   let currentAllocItem = null;
 
   function openAllocateModal(rowIndex) {
-      const item = getWoodItemByRowIndex(rowIndex);
+      // 1. Find the item data
+      const item = stockData.wood.find(w => w.rowIndex === rowIndex);
       if (!item) return;
       currentAllocItem = item;
 
-      document.getElementById('alloc-material-name').innerText = isExternalOffcutItem(item)
-        ? `Offcut: ${item.offcutId} (${item.material})`
-        : `${item.type}: ${item.material} (${item.size})`;
+      // 2. Populate UI
+      document.getElementById('alloc-material-name').innerText = `${item.type}: ${item.material} (${item.size})`;
       document.getElementById('alloc-row-index').value = rowIndex;
-      document.getElementById('alloc-item-source').value = item.source || 'internal';
-      document.getElementById('alloc-offcut-id').value = item.offcutId || '';
       document.getElementById('alloc-qty').value = 1;
+      
+      // Reset Offcut fields
+      document.getElementById('alloc-log-offcut').checked = false;
+      document.getElementById('alloc-offcut-fields').classList.add('hidden');
+      document.getElementById('off-len').value = '';
+      document.getElementById('off-wid').value = '';
 
+      // 3. Use current order only
       const orderLabel = document.getElementById('alloc-project-name');
       const wrap = document.getElementById('alloc-prod-wrapper');
       const prodSelect = document.getElementById('alloc-product-select');
@@ -1516,6 +2655,7 @@ function openCNCNester() {
           wrap.classList.toggle('hidden', prodSelect.options.length === 0);
       }
 
+      // 4. Show Modal
       new bootstrap.Modal(document.getElementById('allocateModal')).show();
   }
 
@@ -1524,51 +2664,58 @@ function openCNCNester() {
       let val = parseInt(el.value) || 0;
       val += change;
       if (val < 1) val = 1;
-      if (currentAllocItem && val > (Number(currentAllocItem.qty) || 1)) val = Number(currentAllocItem.qty) || 1;
+      // Optional: Check max stock
+      if (val > currentAllocItem.qty) val = currentAllocItem.qty;
       el.value = val;
   }
 
+  function toggleOffcutFields() {
+      const isChecked = document.getElementById('alloc-log-offcut').checked;
+      document.getElementById('alloc-offcut-fields').classList.toggle('hidden', !isChecked);
+  }
+
   function confirmAllocation() {
-      const rowIndex = document.getElementById('alloc-row-index').value;
-      const source = document.getElementById('alloc-item-source').value;
-      const offcutId = document.getElementById('alloc-offcut-id').value;
+      const rowIndex = parseInt(document.getElementById('alloc-row-index').value);
       const project = currentOrder;
       const product = document.getElementById('alloc-product-select').value;
       const qtyUsed = parseInt(document.getElementById('alloc-qty').value);
-
+      
       if (!project) { alert("No active order selected."); return; }
       if (!product) { alert("Please select a Product."); return; }
-      if (!qtyUsed || qtyUsed < 1) { alert("Please enter a valid quantity."); return; }
-      if (isExternalOffcutItem(currentAllocItem) && qtyUsed !== 1) { alert("External offcuts can only be allocated one at a time."); return; }
+      
+      // Offcut Data
+      let offcuts = null;
+      if (document.getElementById('alloc-log-offcut').checked) {
+          const len = document.getElementById('off-len').value;
+          const wid = document.getElementById('off-wid').value;
+          const qty = document.getElementById('off-qty').value;
+          
+          if (!len || !wid) { alert("Please enter Offcut dimensions."); return; }
+          offcuts = { length: len, width: wid, qty: parseInt(qty) || 1 };
+      }
 
+      // Close Modal
       const modalEl = document.getElementById('allocateModal');
       const modal = bootstrap.Modal.getInstance(modalEl);
       modal.hide();
 
       showStatus("Allocating...", false);
 
-      const onSuccess = () => {
-        showStatus("Allocated!", true);
-        openCncCutModal(project, product);
-        google.script.run.withSuccessHandler(d => { stockData = d; filterStockByJob(); }).getInventoryData();
-      };
-
-      const onError = (err) => { alert("Error: " + (err && err.message ? err.message : err)); showStatus("Error", false); };
-
-      if (source === 'external_offcut') {
-        google.script.run
-          .withSuccessHandler(onSuccess)
-          .withFailureHandler(onError)
-          .allocateExternalOffcut(offcutId, project, product);
-        return;
-      }
-
+      // Send to Backend
       google.script.run
-        .withSuccessHandler(onSuccess)
-        .withFailureHandler(onError)
-        .allocateWood(parseInt(rowIndex), qtyUsed, project, product);
-  }
+  .withSuccessHandler(() => {
+    showStatus("Allocated!", true);
 
+    // open the cutting picker immediately
+    openCncCutModal(project, product);
+
+    // (optional) refresh stock list like you already do
+    google.script.run.withSuccessHandler(d => { stockData = d; filterStockByJob(); }).getInventoryData();
+  })
+  .withFailureHandler(err => { alert("Error: " + err); showStatus("Error", false); })
+  .allocateWood(rowIndex, qtyUsed, project, product, offcuts);
+
+  }
 
 
   // --- UPDATED STOCK ADJUSTMENT LOGIC ---
@@ -1646,7 +2793,7 @@ function openStockHistory(type, rowIndex) {
 function toggleAdjOtherField() {
       const selectVal = document.getElementById('adj-reason').value;
       const otherWrapper = document.getElementById('adj-other-wrapper');
-
+      
       if (selectVal === 'Other') {
           otherWrapper.classList.remove('hidden');
           setTimeout(() => document.getElementById('adj-reason-manual').focus(), 100);
@@ -1771,14 +2918,14 @@ function commitReceive() {
       const tbody = document.getElementById('history-table-body');
       tbody.innerHTML = ''; // Clear previous
       document.getElementById('history-loading').classList.remove('hidden');
-
+      
       new bootstrap.Modal(document.getElementById('historyModal')).show();
 
       // 2. Fetch Data
       google.script.run
         .withSuccessHandler(history => {
             document.getElementById('history-loading').classList.add('hidden');
-
+            
             if (!history || history.length === 0) {
                 tbody.innerHTML = '<tr><td colspan="2" class="text-center text-muted py-3">No history found.</td></tr>';
                 return;
@@ -2634,7 +3781,7 @@ function approveShopifyLine(shopifyRowIndex, btnElement) {
   if (Object.keys(ws.products).length) rawData[wsKey] = ws;
 }
 
-
+  
   let furnitureData = [];
 
   function openFurnitureStock() {
@@ -2644,7 +3791,7 @@ function approveShopifyLine(shopifyRowIndex, btnElement) {
   function loadFurnitureStock() {
       const list = document.getElementById('furniture-list');
       list.innerHTML = '<div class="text-center text-muted mt-5"><div class="spinner-border"></div></div>';
-
+      
       google.script.run
         .withSuccessHandler(data => {
             furnitureData = data;
@@ -2656,7 +3803,7 @@ function approveShopifyLine(shopifyRowIndex, btnElement) {
   function renderFurnitureList() {
       const list = document.getElementById('furniture-list');
       const loader = document.getElementById('furniture-loading');
-
+      
       if(loader) loader.classList.add('hidden');
       list.innerHTML = '';
 
@@ -2687,7 +3834,7 @@ function approveShopifyLine(shopifyRowIndex, btnElement) {
       const val = prompt("Adjust Furniture Quantity (+/-):");
       const change = parseInt(val);
       if(!change) return;
-
+      
       const reason = prompt("Reason (e.g. Built for stock, Damaged, Delivered):");
       if(!reason) return;
 
@@ -3357,11 +4504,11 @@ function switchCncWoodSubTab(tab) {
             const val = document.activeElement.value.trim();
             if (val.length > 5) { // Assuming barcodes are long
                 processBarcode(val);
-                document.activeElement.value = "";
+                document.activeElement.value = ""; 
                 document.activeElement.blur(); // Unfocus
             }
         }
-        return;
+        return; 
     }
 
     // 2. Buffer the keystrokes
@@ -3384,23 +4531,23 @@ function switchCncWoodSubTab(tab) {
 
   function processBarcode(scannedId) {
     showStatus("Scanning...", false);
-
+    
     // Clean the scan (some scanners add spaces or special chars)
     scannedId = scannedId.trim();
 
     // --- SEARCH ALGORITHM ---
     // We look for a Panel where: OrderID + "-" + SKU + "-" + PanelName(Safe) === scannedId
-
+    
     let found = false;
 
     // Loop through Orders
     for (const [ordId, ordData] of Object.entries(rawData)) {
-
+        
         // Loop through Products
         for (const [prodName, prodData] of Object.entries(ordData.products)) {
-
-            // We need the SKU.
-            // NOTE: Assuming your rawData tree has SKU.
+            
+            // We need the SKU. 
+            // NOTE: Assuming your rawData tree has SKU. 
             // If not, we try to reconstruct it or check partial match.
             // Let's assume the SKU is stored in the product object.
             // If it's missing, we grab it from the first component or panel row if available.
@@ -3408,32 +4555,32 @@ function switchCncWoodSubTab(tab) {
 
             if (prodData.panels) {
                 for (const p of prodData.panels) {
-
+                    
                     // We reconstruct the ID the same way the Sheet does:
                     // Sheet Formula: Order + "-" + SKU + "-" + PanelName(with _ for spaces)
-
+                    
                     // Note: We need the SKU for this panel.
                     // In your getDataTree(), ensure 'sku' is passed in the panel object or product object.
-                    // Assuming 'p.sku' exists or 'prodData.sku' exists.
+                    // Assuming 'p.sku' exists or 'prodData.sku' exists. 
                     // Let's try to match strict pattern first.
-
+                    
                     // Fallback: If we don't have SKU easily, we can try to match the TAIL of the string.
                     // Scanned: "1006-CAB600-Side_Panel"
                     // Target: PanelName = "Side Panel" -> "Side_Panel"
                     // Order: 1006
-
+                    
                     const safeName = p.panelName.replace(/ /g, "_");
-
+                    
                     // Check if the Scanned ID *ENDS WITH* "-[SafeName]" AND *STARTS WITH* "[OrderId]-"
                     // This is safer than guessing the SKU position if we aren't sure of data structure.
-
+                    
                     if (scannedId.endsWith("-" + safeName) && scannedId.startsWith(ordId + "-")) {
                          found = true;
-
+                         
                          // 1. Set Context
                          currentOrder = ordId;
                          currentProduct = prodName;
-
+                         
                          // 2. Set UI Text
                          document.getElementById('dash-customer').innerText = getOrderDisplayTitle(rawData[ordId], ordId);
                          document.getElementById('manuf-customer').innerText = getOrderDisplayTitle(rawData[ordId], ordId);
