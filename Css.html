@@ -43,7 +43,7 @@
       transition: transform 0.15s ease, box-shadow 0.15s ease;
       overflow: hidden;
     }
-    .card:active { transform: scale(0.98); box-shadow: 0 5px 15px -5px rgba(0,0,0,0.1); }
+    .card:not(.panel-row-menu):active { transform: scale(0.98); box-shadow: 0 5px 15px -5px rgba(0,0,0,0.1); }
 
     .panel-row-actions {
       display: inline-flex;
@@ -107,20 +107,23 @@
     .header-action-row {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 12px;
+      gap: 8px;
       margin: 0 0 16px;
+      overflow: visible;
     }
 
     .header-action-btn {
       width: 100%;
       border-radius: 14px;
-      min-height: 44px;
-      font-weight: 700;
-      font-size: 1rem;
+      min-height: 40px;
+      font-weight: 600;
+      font-size: 0.9rem;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      gap: 6px;
+      gap: 5px;
+      padding-left: 10px;
+      padding-right: 10px;
     }
 
     #order-pending-pill {
@@ -161,12 +164,12 @@
       }
 
       .header-action-row {
-        gap: 10px;
+        gap: 6px;
       }
 
       .header-action-btn {
-        min-height: 42px;
-        font-size: 0.95rem;
+        min-height: 38px;
+        font-size: 0.82rem;
       }
     }
     
@@ -402,6 +405,13 @@
   transform: none !important;
 }
 
+/* --- FIX: stop bounce on product catalogue cards --- */
+#catalogue-list .card:active,
+#catalogue-list .card {
+  transform: none !important;
+  transition: none !important;
+}
+
 /* --- FIX: make taps reliable in Components list --- */
 #comp-list button, #comp-list .btn-squircle {
   touch-action: manipulation;
@@ -558,4 +568,3 @@
     }
 
 </style>
-
