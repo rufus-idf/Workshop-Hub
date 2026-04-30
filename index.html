@@ -71,13 +71,37 @@
     </div>
   </div>
 
-  <div id="view-jobs">
+
+  <!-- LOGIN SCREEN -->
+  <div id="view-login" style="min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:2rem; background:#f4f6f8;">
+    <div class="text-center mb-5">
+      <h1 class="fw-bold mb-1">Workshop<span style="color:var(--color-cut, #e74c3c);">Hub</span></h1>
+      <p class="text-muted mb-0">Who are you? Select your name to continue.</p>
+    </div>
+    <div style="width:100%; max-width:380px;">
+      <div class="row g-3">
+        <div class="col-6"><button class="btn btn-outline-dark w-100 py-3 fw-bold fs-5 rounded-3" onclick="selectUser('Ben')">Ben</button></div>
+        <div class="col-6"><button class="btn btn-outline-dark w-100 py-3 fw-bold fs-5 rounded-3" onclick="selectUser('Adam')">Adam</button></div>
+        <div class="col-6"><button class="btn btn-outline-dark w-100 py-3 fw-bold fs-5 rounded-3" onclick="selectUser('Ian')">Ian</button></div>
+        <div class="col-6"><button class="btn btn-outline-dark w-100 py-3 fw-bold fs-5 rounded-3" onclick="selectUser('Rufus')">Rufus</button></div>
+        <div class="col-6"><button class="btn btn-outline-dark w-100 py-3 fw-bold fs-5 rounded-3" onclick="selectUser('Theo')">Theo</button></div>
+        <div class="col-6"><button class="btn btn-outline-dark w-100 py-3 fw-bold fs-5 rounded-3" onclick="selectUser('David')">David</button></div>
+        <div class="col-6"><button class="btn btn-outline-dark w-100 py-3 fw-bold fs-5 rounded-3" onclick="selectUser('Eli')">Eli</button></div>
+        <div class="col-6"><button class="btn btn-outline-dark w-100 py-3 fw-bold fs-5 rounded-3" onclick="selectUser('Tom')">Tom</button></div>
+        <div class="col-6"><button class="btn btn-outline-dark w-100 py-3 fw-bold fs-5 rounded-3" onclick="selectUser('Allan')">Allan</button></div>
+        <div class="col-6"><button class="btn btn-outline-dark w-100 py-3 fw-bold fs-5 rounded-3" onclick="selectUser('Peter')">Peter</button></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="view-jobs" class="hidden">
     <div class="app-header admin-header position-relative">
       <div class="header-left d-flex align-items-center gap-2">
-        <img src="<?= logoDataUri ?>" alt="i-Design Furniture Logo" class="admin-logo" onerror="this.onerror=null;this.src='https://i-designfurniture.com/wp-content/uploads/2018/04/image.png';">
+        <img src="<?= logoDataUri ?>" alt="i-Design Furniture Logo" class="admin-logo" onerror="this.onerror=null;this.src='https://drive.google.com/thumbnail?id=17w396Wt457eccDZrqiEkK1Y8l6YtAYIu&sz=w400';">
         <button class="btn btn-outline-dark rounded-circle refresh-icon-btn" onclick="reloadAllData()" aria-label="Refresh">
           ↻
         </button>
+        <button class="btn btn-outline-dark rounded-circle" onclick="openProductCatalogue()" title="Product Data" style="width:36px; height:36px; font-size:16px; padding:0; line-height:1;">📋</button>
       </div>
 
       <div class="text-center position-absolute start-50 translate-middle-x">
@@ -89,20 +113,25 @@
       <div class="header-right d-flex align-items-center justify-content-end gap-2">
         <span class="badge bg-white text-dark shadow-sm py-2 px-3 rounded-pill" id="date-badge">Today</span>
         <span id="health-badge" class="badge bg-success" title="Server status">Online</span>
+        <span id="user-badge" class="badge bg-dark text-white shadow-sm py-2 px-3 rounded-pill hidden">👤</span>
+        <button id="signout-btn" class="btn btn-outline-secondary rounded-circle hidden" onclick="signOut()" title="Sign Out" style="width:36px; height:36px; font-size:15px; padding:0; line-height:1;">↩</button>
+        <button class="btn btn-outline-dark rounded-circle" onclick="openHelpBooklet()" title="Help Booklet" style="width:36px; height:36px; font-size:16px; padding:0; line-height:1;">📘</button>
       </div>
     </div>
+
+    <div id="presence-bar" class="d-flex justify-content-end align-items-center flex-wrap gap-1 px-3" style="padding: 2px 12px 4px; min-height: 24px;"></div>
 
     <div class="header-action-row">
       <button class="btn btn-outline-dark header-action-btn" onclick="openStockLists()">📦 Stock Lists</button>
       <button id="orders-btn" class="btn btn-outline-dark header-action-btn position-relative" onclick="openShopifyOrders()">
         🛒 Orders
         <span id="order-pending-pill" class="badge bg-danger text-white hidden">0 waiting</span>
-        <span id="order-badge" class="position-absolute top-0 start-100 translate-middle p-1 bg-danger border border-light rounded-circle hidden">
+        <span id="order-badge" class="position-absolute top-0 end-0 translate-middle p-1 bg-danger border border-light rounded-circle hidden">
           <span class="visually-hidden">New alerts</span>
         </span>
       </button>
       <button class="btn btn-outline-dark header-action-btn" onclick="openTrackingView()">📋 Tracking</button>
-      <button class="btn btn-outline-dark header-action-btn" onclick="openHelpBooklet()">📘 Help Booklet</button>
+      <button class="btn btn-outline-dark header-action-btn position-relative" onclick="openActionList()">✅ Action List<span id="action-badge" class="position-absolute top-0 end-0 translate-middle badge rounded-pill bg-danger hidden" style="font-size:0.65rem; min-width:1.2rem;">0</span></button>
     </div>
 
     <div id="orders-pending-banner" class="alert alert-danger py-2 px-3 mb-3 hidden" role="status" aria-live="polite">
@@ -114,6 +143,9 @@
       <a class="nav-link active" id="tab-active" onclick="switchTab('active')">Client Jobs</a>
       <a class="nav-link" id="tab-history" onclick="switchTab('history')">Completed</a>
     </ul>
+    <div class="px-3 pt-2 pb-1">
+      <input type="text" id="search-jobs" class="form-control rounded-pill shadow-sm border-0" style="height: 50px;" placeholder="🔍 Search orders..." oninput="renderJobs()">
+    </div>
     <div id="job-list"></div>
     <div id="loading" class="text-center mt-5"><div class="spinner-border text-secondary"></div></div>
   </div>
@@ -131,12 +163,16 @@
     <div class="menu-choice-btn choice-cnc" onclick="openCNCView()"><span>🪚 CNC Station</span><small>Load Sheets, Cut Panels</small></div>
     <div class="menu-choice-btn choice-manuf" onclick="openManufacturing()"><span>🏭 Manufacturing</span><small>Cut, CNC'd, Packed</small></div>
     <div id="btn-dash-deliv" class="menu-choice-btn choice-deliv" onclick="openDelivery()"><span>🚛 Delivery & Fitting</span><small>Bucket, Rooms, Status</small></div>
+    <div class="menu-choice-btn" style="border-left:5px solid #00B0E9;" onclick="openAllocatePanelsFromDashboard()"><span>📥 Allocate Panels</span><small>Assign surplus stock to this order</small></div>
   </div>
 
   <div id="view-manuf-list" class="hidden">
-    <div class="d-flex align-items-center sticky-top-bar">
-      <button class="btn btn-light rounded-circle shadow-sm me-3" style="width:45px; height:45px;" onclick="showView('view-dashboard')">🡐</button>
-      <div><h6 class="text-muted small mb-0">MANUFACTURING</h6><h4 class="mb-0" id="manuf-customer"></h4></div>
+    <div class="d-flex align-items-center justify-content-between sticky-top-bar">
+      <div class="d-flex align-items-center">
+        <button class="btn btn-light rounded-circle shadow-sm me-3" style="width:45px; height:45px;" onclick="showView('view-dashboard')">🡐</button>
+        <div><h6 class="text-muted small mb-0">MANUFACTURING</h6><h4 class="mb-0" id="manuf-customer"></h4></div>
+      </div>
+      <button class="btn btn-dark btn-sm rounded-pill px-3" onclick="openManufSummary()">📊 Print Summary</button>
     </div>
     <div id="product-list"></div>
   </div>
@@ -173,6 +209,7 @@
   <ul class="nav-segment mb-3">
     <a class="nav-link active" id="tab-bucket" onclick="switchDelivTab('bucket')">🪣 Bucket</a>
     <a class="nav-link" id="tab-rooms" onclick="switchDelivTab('rooms')">🏢 Rooms</a>
+    <a class="nav-link" id="tab-schedules" onclick="switchDelivTab('schedules')">📋 Schedules</a>
   </ul>
 
   <div id="deliv-bucket-view">
@@ -183,20 +220,77 @@
   </div>
 
   <div id="deliv-rooms-view" class="hidden">
-    <div class="d-flex justify-content-end mb-3">
-      <button type="button"
-              id="room-export-btn"
-              class="btn btn-outline-dark rounded-pill"
-              onclick="exportRoomListToGoogleSheets()">
-        📄 Export to Google Sheets
-      </button>
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <button class="btn btn-outline-dark rounded-pill btn-sm px-3" onclick="openBulkAssignView()">⚡ Bulk Assign</button>
+      <button type="button" id="room-export-btn" class="btn btn-outline-dark rounded-pill btn-sm px-3" onclick="exportRoomListToGoogleSheets()">📄 Export</button>
     </div>
     <div id="rooms-list"></div>
     <div class="fab" onclick="openAssignModal()">+</div>
   </div>
+
+  <div id="deliv-schedules-view" class="hidden">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <button class="btn btn-outline-dark rounded-pill px-3" onclick="openOptimiseModal()">⚖ Optimise Schedule</button>
+      <button class="btn btn-dark rounded-pill px-4 fw-bold" onclick="openNewDeliveryView()">+ New Delivery</button>
+    </div>
+    <div id="schedules-list"></div>
+  </div>
+</div>
+
+<!-- NEW DELIVERY VIEW -->
+<div id="view-new-delivery" class="hidden">
+  <div class="d-flex align-items-center sticky-top-bar">
+    <button class="btn btn-light rounded-circle shadow-sm me-3" style="width:45px; height:45px;" onclick="showView('view-delivery')">🡐</button>
+    <div><h6 class="text-muted small mb-0">LOGISTICS</h6><h4 class="mb-0">New Delivery Note</h4></div>
+  </div>
+  <div class="px-3 pt-3 pb-5">
+    <div class="card border-0 shadow-sm p-3 mb-3">
+      <div class="mb-3">
+        <label class="small fw-semibold text-uppercase text-muted mb-1">Delivery Date</label>
+        <input type="date" id="new-deliv-date" class="form-control fw-bold">
+      </div>
+      <div>
+        <label class="small fw-semibold text-uppercase text-muted mb-1">Notes (optional)</label>
+        <input type="text" id="new-deliv-notes" class="form-control" placeholder="e.g. AM delivery, access via rear">
+      </div>
+    </div>
+
+    <div class="small fw-semibold text-uppercase text-muted mb-2">Select Rooms for this Delivery</div>
+    <div id="new-deliv-rooms-list" class="mb-4"></div>
+
+    <button class="btn btn-dark w-100 rounded-pill py-3 fw-bold" id="new-deliv-save-btn" onclick="saveAndGenerateDeliveryNote()">Save &amp; Generate Delivery Note</button>
+  </div>
 </div>
 
 
+
+  <div id="view-bulk-assign" class="hidden">
+    <div class="d-flex align-items-center justify-content-between sticky-top-bar">
+      <div class="d-flex align-items-center">
+        <button class="btn btn-light rounded-circle shadow-sm me-3" style="width:45px; height:45px;" onclick="showView('view-delivery')">🡐</button>
+        <div><h6 class="text-muted small mb-0">LOGISTICS</h6><h4 class="mb-0">Bulk Assign to Rooms</h4></div>
+      </div>
+      <button class="btn btn-dark rounded-pill px-4 fw-bold" id="bulk-confirm-btn" onclick="commitBulkAssignment()" style="display:none;">Assign All ➔</button>
+    </div>
+
+    <div class="px-3 pt-3">
+      <div class="d-flex gap-2 align-items-end mb-3">
+        <div style="flex:1; max-width:360px;">
+          <label class="small fw-semibold text-uppercase text-muted mb-1">Room Numbers (one per line)</label>
+          <textarea id="bulk-rooms-input" class="form-control fw-bold" rows="3" placeholder="3/1&#10;3/2&#10;3/3&#10;3/4"></textarea>
+        </div>
+        <button class="btn btn-dark rounded-pill px-4 py-2 fw-bold mb-0" onclick="generateBulkGrid()">Generate Table →</button>
+      </div>
+
+      <div id="bulk-grid-totals-warn" class="small text-danger mb-2 fw-bold" style="display:none;"></div>
+
+      <div id="bulk-grid-wrap" style="display:none;">
+        <div style="overflow:auto; max-height:calc(100vh - 260px);">
+          <table class="table table-sm table-bordered align-middle mb-0" id="bulk-grid-table" style="font-size:0.85rem;"></table>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <div id="view-fork" class="hidden">
     <div class="d-flex align-items-center sticky-top-bar">
@@ -205,6 +299,8 @@
     </div>
     <div class="menu-choice-btn choice-panels" onclick="openPanels()"><span>🪵 Panels</span><small>Cut, Edge, Drill</small></div>
     <div class="menu-choice-btn choice-comps" onclick="openComponents()"><span>🔩 Components</span><small>Hardware & Fittings</small></div>
+    <div class="menu-choice-btn choice-cnc" onclick="openForkGateModal()"><span>ℹ️ Track Progress</span><small>Why not manufactured yet?</small></div>
+    <div class="menu-choice-btn choice-deliv" onclick="openForkExport()"><span>📄 Generate XML</span><small>Export CNC cut file</small></div>
   </div>
 
   <div id="view-panels" class="hidden">
@@ -299,7 +395,10 @@
   <!-- WOOD -->
   <div id="stock-pane-wood">
     <div class="sticky-top-bar" style="top: 80px; z-index: 89; margin-bottom: 15px; padding-top:0;">
-      <input type="text" id="search-wood" class="form-control rounded-pill shadow-sm border-0" style="height: 50px;" placeholder="🔍 Search material..." onkeyup="filterList('search-wood', 'wood-row')">
+      <div class="d-flex gap-2 align-items-center">
+        <input type="text" id="search-wood" class="form-control rounded-pill shadow-sm border-0 flex-grow-1" style="height: 50px;" placeholder="🔍 Search material..." onkeyup="filterList('search-wood', 'wood-row')">
+        <button class="btn btn-dark rounded-pill fw-bold px-3" style="height:50px; white-space:nowrap;" onclick="openAddItemModal('wood')">+ Add</button>
+      </div>
     </div>
     <!-- Wood Sub Tabs -->
 <ul class="nav-segment mb-3" style="margin-top:10px;">
@@ -318,15 +417,26 @@
   <!-- COMPONENTS -->
   <div id="stock-pane-comp" class="hidden">
     <div class="sticky-top-bar" style="top: 80px; z-index: 89; margin-bottom: 15px; padding-top:0;">
-      <input type="text" id="search-stock" class="form-control rounded-pill shadow-sm border-0" style="height: 50px;" placeholder="🔍 Search screws, hinges..." onkeyup="filterList('search-stock', 'stock-row')">
+      <div class="d-flex gap-2 align-items-center">
+        <input type="text" id="search-stock" class="form-control rounded-pill shadow-sm border-0 flex-grow-1" style="height: 50px;" placeholder="🔍 Search screws, hinges..." oninput="renderComponentStockTable()">
+        <button class="btn btn-dark rounded-pill fw-bold px-3" style="height:50px; white-space:nowrap;" onclick="openAddItemModal('comp')">+ Add</button>
+      </div>
     </div>
-    <div id="stock-comp-list" class="pb-5"></div>
+    <ul class="nav-segment mb-3" style="margin-top:10px;">
+      <a class="nav-link active" id="tab-comp-instock" onclick="switchCompSubTab('instock')">📦 In Stock</a>
+      <a class="nav-link" id="tab-comp-onorder" onclick="switchCompSubTab('onorder')">🧾 On Order</a>
+    </ul>
+    <div id="stock-comp-instock-list" class="pb-5"></div>
+    <div id="stock-comp-onorder-list" class="pb-5 hidden"></div>
   </div>
 
   <!-- EDGEBANDING -->
   <div id="stock-pane-edge" class="hidden">
     <div class="sticky-top-bar" style="top: 80px; z-index: 89; margin-bottom: 15px; padding-top:0;">
-      <input type="text" id="search-edge" class="form-control rounded-pill shadow-sm border-0" style="height: 50px;" placeholder="🔍 Search edgebanding..." onkeyup="filterList('search-edge', 'edge-row')">
+      <div class="d-flex gap-2 align-items-center">
+        <input type="text" id="search-edge" class="form-control rounded-pill shadow-sm border-0 flex-grow-1" style="height: 50px;" placeholder="🔍 Search edgebanding..." onkeyup="filterList('search-edge', 'edge-row')">
+        <button class="btn btn-dark rounded-pill fw-bold px-3" style="height:50px; white-space:nowrap;" onclick="openAddItemModal('edge')">+ Add</button>
+      </div>
     </div>
     <ul class="nav-segment mb-3" style="margin-top:10px;">
   <a class="nav-link active" id="tab-edge-instock" onclick="switchEdgeSubTab('instock')">🧵 Full Rolls</a>
@@ -340,27 +450,65 @@
 
   <!-- FURNITURE -->
   <div id="stock-pane-furn" class="hidden">
-    <div class="p-3">
-      <input type="text" id="furn-search" class="form-control mb-3" placeholder="Search customer or product..." onkeyup="filterList('furn-search', 'furn-row')">
+    <ul class="nav-segment mb-3" style="margin-top:10px;">
+      <a class="nav-link active" id="tab-furn-stock" onclick="switchFurnSubTab('stock')">🛏 Furniture Stock</a>
+      <a class="nav-link" id="tab-furn-surplus" onclick="switchFurnSubTab('surplus')">♻️ Surplus Panels</a>
+    </ul>
 
-      <div class="card border-0 shadow-sm overflow-hidden">
-        <table class="table table-hover mb-0 align-middle">
-          <thead class="bg-light">
-            <tr>
-              <th class="ps-3 text-secondary small" style="width:30%">Customer</th>
-              <th class="text-secondary small">Product / SKU</th>
-              <th class="text-center text-secondary small" style="width:20%">Qty</th>
-              <th class="text-end pe-3" style="width:10%"></th>
-            </tr>
-          </thead>
-          <tbody id="furniture-list"></tbody>
-        </table>
+    <!-- Furniture Stock sub-pane -->
+    <div id="furn-pane-stock">
+      <div class="p-3">
+        <input type="text" id="furn-search" class="form-control mb-3" placeholder="Search customer or product..." onkeyup="filterList('furn-search', 'furn-row')">
+        <div class="card border-0 shadow-sm overflow-hidden">
+          <table class="table table-hover mb-0 align-middle">
+            <thead class="bg-light">
+              <tr>
+                <th class="ps-3 text-secondary small" style="width:25%">Customer</th>
+                <th class="text-secondary small">Product / SKU</th>
+                <th class="text-center text-secondary small" style="width:15%">Qty</th>
+                <th class="text-end pe-3 text-secondary small" style="width:20%">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="furniture-list"></tbody>
+          </table>
+        </div>
+        <div id="furniture-loading" class="text-center mt-4">Loading...</div>
       </div>
+    </div>
 
-      <div id="furniture-loading" class="text-center mt-4">Loading...</div>
+    <!-- Surplus Panels sub-pane -->
+    <div id="furn-pane-surplus" class="hidden">
+      <div class="p-3">
+        <div id="surplus-list"><div class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm"></div> Loading...</div></div>
+      </div>
     </div>
   </div>
 
+</div>
+
+<div id="view-action-list" class="hidden">
+  <div class="d-flex align-items-center sticky-top-bar" style="top: 0;">
+    <button class="btn btn-light rounded-circle shadow-sm me-3" style="width:45px; height:45px;" onclick="showView('view-jobs')">🡐</button>
+    <div><h6 class="text-muted small mb-0">TASKS</h6><h4 class="mb-0">Action List</h4></div>
+  </div>
+
+  <div class="px-3 pt-2">
+    <div class="d-flex gap-2 mb-3 align-items-center">
+      <select id="action-filter-assignee" class="form-select flex-grow-1" onchange="renderActionList()">
+        <option value="">All Team Members</option>
+        <option>Ben</option><option>Adam</option><option>Ian</option><option>Rufus</option>
+        <option>Theo</option><option>David</option><option>Eli</option><option>Tom</option>
+        <option>Allan</option><option>Peter</option>
+      </select>
+      <button class="btn btn-dark rounded-pill fw-bold px-3" style="white-space:nowrap;" onclick="openAddTaskModal()">+ New Task</button>
+    </div>
+    <div class="d-flex gap-0 mb-3" style="border-bottom: 2px solid #dee2e6;">
+      <button id="action-tab-open" class="btn btn-link fw-bold px-4 pb-2 text-dark border-0" style="border-bottom: 3px solid #000; border-radius:0; margin-bottom:-2px;" onclick="switchActionTab('open')">Open</button>
+      <button id="action-tab-completed" class="btn btn-link fw-bold px-4 pb-2 text-muted border-0" style="border-radius:0; margin-bottom:-2px;" onclick="switchActionTab('completed')">Completed</button>
+    </div>
+  </div>
+
+  <div id="action-list-body" class="px-3 pb-5"></div>
 </div>
 
 <div id="view-help-booklet" class="hidden">
@@ -376,27 +524,30 @@
     <aside class="help-booklet-contents card border-0 shadow-sm">
       <div class="help-booklet-contents-title">Contents</div>
       <button id="help-nav-intro" class="help-nav-btn active" onclick="openHelpSection('intro')">1. Introduction & Daily Start</button>
-      <button id="help-nav-jobflow" class="help-nav-btn" onclick="openHelpSection('jobflow')">2. Job Flow & Screen Guide</button>
-      <button id="help-nav-manufacturing" class="help-nav-btn" onclick="openHelpSection('manufacturing')">3. Manufacturing Workflow</button>
-      <button id="help-nav-damage" class="help-nav-btn" onclick="openHelpSection('damage')">4. Damaged Panels Procedure</button>
-      <button id="help-nav-delivery" class="help-nav-btn" onclick="openHelpSection('delivery')">5. Delivery, Bucket & Rooms</button>
-      <button id="help-nav-workshop-stock" class="help-nav-btn" onclick="openHelpSection('workshop-stock')">6. Workshop Stock Jobs</button>
-      <button id="help-nav-cnc" class="help-nav-btn" onclick="openHelpSection('cnc')">7. CNC & Stock Deductions</button>
-      <button id="help-nav-inventory" class="help-nav-btn" onclick="openHelpSection('inventory')">8. Inventory & Replenishment</button>
-      <button id="help-nav-orders" class="help-nav-btn" onclick="openHelpSection('orders')">9. Orders & Tracking</button>
-      <button id="help-nav-qa" class="help-nav-btn" onclick="openHelpSection('qa')">10. End-of-Day Checklist</button>
+      <button id="help-nav-sessions" class="help-nav-btn" onclick="openHelpSection('sessions')">2. User Sessions & Login</button>
+      <button id="help-nav-jobflow" class="help-nav-btn" onclick="openHelpSection('jobflow')">3. Job Flow & Screen Guide</button>
+      <button id="help-nav-manufacturing" class="help-nav-btn" onclick="openHelpSection('manufacturing')">4. Manufacturing Workflow</button>
+      <button id="help-nav-damage" class="help-nav-btn" onclick="openHelpSection('damage')">5. Damaged Panels Procedure</button>
+      <button id="help-nav-delivery" class="help-nav-btn" onclick="openHelpSection('delivery')">6. Delivery, Bucket & Rooms</button>
+      <button id="help-nav-workshop-stock" class="help-nav-btn" onclick="openHelpSection('workshop-stock')">7. Workshop Stock Jobs</button>
+      <button id="help-nav-cnc" class="help-nav-btn" onclick="openHelpSection('cnc')">8. CNC & Stock Deductions</button>
+      <button id="help-nav-inventory" class="help-nav-btn" onclick="openHelpSection('inventory')">9. Stock Lists & Inventory</button>
+      <button id="help-nav-action-list" class="help-nav-btn" onclick="openHelpSection('action-list')">10. Action List</button>
+      <button id="help-nav-orders" class="help-nav-btn" onclick="openHelpSection('orders')">11. Orders & Tracking</button>
+      <button id="help-nav-qa" class="help-nav-btn" onclick="openHelpSection('qa')">12. End-of-Day Checklist</button>
     </aside>
 
     <section class="help-booklet-pages">
       <article id="help-page-intro" class="help-page card border-0 shadow-sm">
         <div class="help-page-header">
-          <span class="help-page-kicker">Page 1 of 10</span>
+          <span class="help-page-kicker">Page 1 of 12</span>
           <h3>Introduction & Daily Start</h3>
         </div>
         <div class="help-page-body">
           <p>This booklet is for workshop operators and fit-out teams. It explains how to use Workshop Hub from first login through to dispatch, using only front-end actions you perform in the app.</p>
           <h6>Start of shift routine</h6>
           <ol>
+            <li>On the <strong>login screen</strong>, tap your name to identify yourself for this session.</li>
             <li>Confirm the top-right badge is <strong>Online</strong> before editing anything.</li>
             <li>Press <strong>↻</strong> to refresh and pull latest job, stock and tracking updates.</li>
             <li>Check the <strong>Orders</strong> button for waiting imports (red indicator).</li>
@@ -406,9 +557,34 @@
         </div>
       </article>
 
+      <article id="help-page-sessions" class="help-page card border-0 shadow-sm hidden">
+        <div class="help-page-header">
+          <span class="help-page-kicker">Page 2 of 12</span>
+          <h3>User Sessions & Login</h3>
+        </div>
+        <div class="help-page-body">
+          <p>Workshop Hub uses a simple name-picker instead of individual Google accounts. Everyone shares the workshop tablet/browser but each person identifies themselves at the start of their session so all activity is logged correctly.</p>
+          <h6>Logging in</h6>
+          <ol>
+            <li>When the app loads you will see the <strong>Who are you?</strong> screen.</li>
+            <li>Tap your name from the list.</li>
+            <li>You are taken straight to the jobs view — your name appears in the top-right header as <strong>👤 Name</strong>.</li>
+          </ol>
+          <h6>What your session affects</h6>
+          <ul>
+            <li>All stock changes, panel updates, component packing, and delivery actions are logged under your name in the Tracking tab.</li>
+            <li>The <strong>Action List</strong> filter defaults to your name so you see your own tasks immediately.</li>
+            <li>New tasks you create pre-fill the <strong>Assigned By</strong> field with your name.</li>
+          </ul>
+          <h6>Signing out</h6>
+          <p>Tap the <strong>↩</strong> icon (next to your name badge in the header) and confirm. The app returns to the login screen ready for the next person.</p>
+          <div class="help-tip"><strong>Important:</strong> Always sign out at the end of your session so the next person's actions are not logged under your name.</div>
+        </div>
+      </article>
+
       <article id="help-page-jobflow" class="help-page card border-0 shadow-sm hidden">
         <div class="help-page-header">
-          <span class="help-page-kicker">Page 2 of 10</span>
+          <span class="help-page-kicker">Page 3 of 12</span>
           <h3>Job Flow & Screen Guide</h3>
         </div>
         <div class="help-page-body">
@@ -431,7 +607,7 @@
 
       <article id="help-page-manufacturing" class="help-page card border-0 shadow-sm hidden">
         <div class="help-page-header">
-          <span class="help-page-kicker">Page 3 of 10</span>
+          <span class="help-page-kicker">Page 4 of 12</span>
           <h3>Manufacturing Workflow (Panels & Components)</h3>
         </div>
         <div class="help-page-body">
@@ -452,7 +628,7 @@
 
       <article id="help-page-damage" class="help-page card border-0 shadow-sm hidden">
         <div class="help-page-header">
-          <span class="help-page-kicker">Page 4 of 10</span>
+          <span class="help-page-kicker">Page 5 of 12</span>
           <h3>Damaged Panels Procedure</h3>
         </div>
         <div class="help-page-body">
@@ -475,7 +651,7 @@
 
       <article id="help-page-delivery" class="help-page card border-0 shadow-sm hidden">
         <div class="help-page-header">
-          <span class="help-page-kicker">Page 5 of 10</span>
+          <span class="help-page-kicker">Page 6 of 12</span>
           <h3>Delivery, Bucket & Rooms</h3>
         </div>
         <div class="help-page-body">
@@ -497,7 +673,7 @@
 
       <article id="help-page-workshop-stock" class="help-page card border-0 shadow-sm hidden">
         <div class="help-page-header">
-          <span class="help-page-kicker">Page 6 of 10</span>
+          <span class="help-page-kicker">Page 7 of 12</span>
           <h3>Workshop Stock Jobs (Internal Builds)</h3>
         </div>
         <div class="help-page-body">
@@ -515,7 +691,7 @@
 
       <article id="help-page-cnc" class="help-page card border-0 shadow-sm hidden">
         <div class="help-page-header">
-          <span class="help-page-kicker">Page 7 of 10</span>
+          <span class="help-page-kicker">Page 8 of 12</span>
           <h3>CNC Station & Stock Deductions</h3>
         </div>
         <div class="help-page-body">
@@ -530,25 +706,70 @@
 
       <article id="help-page-inventory" class="help-page card border-0 shadow-sm hidden">
         <div class="help-page-header">
-          <span class="help-page-kicker">Page 8 of 10</span>
-          <h3>Inventory & Replenishment Use</h3>
+          <span class="help-page-kicker">Page 9 of 12</span>
+          <h3>Stock Lists & Inventory</h3>
         </div>
         <div class="help-page-body">
-          <h6>Stock Lists sections</h6>
+          <h6>Stock list sections</h6>
           <ul>
-            <li><strong>Wood:</strong> Full Sheets, On Order, Offcuts.</li>
-            <li><strong>Components:</strong> fittings, hardware and consumables.</li>
-            <li><strong>Edge:</strong> roll stock and pending supplies.</li>
+            <li><strong>Wood:</strong> sub-tabs for In Stock, On Order, and Offcuts.</li>
+            <li><strong>Components:</strong> sub-tabs for In Stock and On Order.</li>
+            <li><strong>Edge Band:</strong> roll stock and On Order.</li>
             <li><strong>Furniture:</strong> finished stock items.</li>
           </ul>
-          <p>Use search bars to verify availability before committing a rush cut or replacement.</p>
-          <div class="help-tip"><strong>Tip:</strong> When parts are marked damaged or re-cut is needed, check stock lists immediately to avoid line stoppages.</div>
+          <h6>Adjusting stock levels</h6>
+          <p>Use the <strong>+</strong> / <strong>−</strong> buttons on any stock row to adjust quantities. You will be prompted for a reason — every change is logged in the Tracking tab against your name.</p>
+          <h6>On Order sub-tabs</h6>
+          <p>When you have placed a supplier order, use the <strong>On Order</strong> sub-tab to record how many are expected. When the delivery arrives, press <strong>Receive</strong> to move quantity from On Order into In Stock automatically.</p>
+          <h6>Adding new stock items</h6>
+          <p>To add a brand-new material or component that doesn't exist in the list yet, tap the <strong>+ Add</strong> button above the search bar for that stock type. A form will appear:</p>
+          <ul>
+            <li><strong>Wood:</strong> Material, Colour Code (free text), Size (dropdown or custom), Price. Current stock and On Order are optional.</li>
+            <li><strong>Components:</strong> Name, Item Code, Category (dropdown or add new), Supplier (dropdown or add new), Price. Stock, On Order and Supplier Link are optional.</li>
+            <li><strong>Edge Band:</strong> Material, Thickness (dropdown or custom), Roll Length (dropdown or custom), Price. Stock and On Order are optional.</li>
+          </ul>
+          <p>Once saved, the new item appears in the list immediately and is written to the background spreadsheet.</p>
+          <div class="help-tip"><strong>Tip:</strong> Use search bars to verify availability before committing a rush cut or replacement. When parts are damaged, check stock lists straight away to avoid line stoppages.</div>
+        </div>
+      </article>
+
+      <article id="help-page-action-list" class="help-page card border-0 shadow-sm hidden">
+        <div class="help-page-header">
+          <span class="help-page-kicker">Page 10 of 12</span>
+          <h3>Action List</h3>
+        </div>
+        <div class="help-page-body">
+          <p>The Action List is a shared task board for directors and workshop managers to assign jobs to team members. It is accessed from the <strong>Action List</strong> tab in the main navigation.</p>
+          <h6>Viewing tasks</h6>
+          <ul>
+            <li>When you open the Action List it automatically filters to your name so you see your own tasks first.</li>
+            <li>Use the <strong>filter dropdown</strong> at the top to switch to another team member's view, or select <strong>All Team Members</strong> to see everything.</li>
+            <li>Tasks are sorted by priority (High first) and then by status (Not Started before In Progress).</li>
+            <li>Overdue tasks are highlighted in red.</li>
+          </ul>
+          <h6>Task priorities & statuses</h6>
+          <ul>
+            <li><strong>Priority:</strong> High (red badge), Medium (amber), Low (green).</li>
+            <li><strong>Status:</strong> Not Started → In Progress → Completed.</li>
+          </ul>
+          <h6>Starting and completing tasks</h6>
+          <ol>
+            <li>Tap <strong>▶ Start</strong> on a task to mark it In Progress — this records progress without removing it from the list.</li>
+            <li>Tap <strong>✓ Complete</strong> to mark it done. Completed tasks disappear from the list view but remain on the background spreadsheet for reference.</li>
+          </ol>
+          <h6>Creating a new task</h6>
+          <ol>
+            <li>Tap <strong>+ New Task</strong> at the top of the Action List.</li>
+            <li>Fill in: <strong>Task description</strong>, <strong>Assign To</strong> (who should do it), <strong>Assigned By</strong> (pre-filled with your name), <strong>Priority</strong>, and optionally a <strong>Due Date</strong>.</li>
+            <li>Press <strong>Save Task</strong> — it appears immediately in the list.</li>
+          </ol>
+          <div class="help-tip"><strong>Tip:</strong> Always set a due date on urgent tasks so they highlight as overdue if not actioned in time.</div>
         </div>
       </article>
 
       <article id="help-page-orders" class="help-page card border-0 shadow-sm hidden">
         <div class="help-page-header">
-          <span class="help-page-kicker">Page 9 of 10</span>
+          <span class="help-page-kicker">Page 11 of 12</span>
           <h3>Orders Import & Tracking Audits</h3>
         </div>
         <div class="help-page-body">
@@ -568,7 +789,7 @@
 
       <article id="help-page-qa" class="help-page card border-0 shadow-sm hidden">
         <div class="help-page-header">
-          <span class="help-page-kicker">Page 10 of 10</span>
+          <span class="help-page-kicker">Page 12 of 12</span>
           <h3>End-of-Day Checklist</h3>
         </div>
         <div class="help-page-body">
@@ -577,13 +798,29 @@
             <li>Record all damaged panels with quantity + clear reason.</li>
             <li>Confirm bucket/room allocations match physical staging.</li>
             <li>Verify delivered/fitted statuses for site teams.</li>
+            <li>Check the <strong>Action List</strong> — mark any tasks you completed today as done.</li>
             <li>Refresh once and resolve any obvious mismatches before handover.</li>
+            <li>Tap <strong>↩</strong> in the header and sign out so the next person's session is logged correctly.</li>
           </ol>
           <p class="mb-0"><strong>Outcome:</strong> The next shift starts with a trustworthy system state and no hidden surprises.</p>
         </div>
       </article>
     </section>
   </div>
+</div>
+
+<div id="view-product-catalogue" class="hidden">
+  <div class="d-flex align-items-center sticky-top-bar">
+    <button class="btn btn-light rounded-circle shadow-sm me-3" style="width:45px; height:45px;" onclick="showView('view-jobs')">🡐</button>
+    <div>
+      <h6 class="text-muted small mb-0">REFERENCE</h6>
+      <h4 class="mb-0">Product Data</h4>
+    </div>
+  </div>
+  <div class="px-3 pt-3 pb-2">
+    <input id="catalogue-search" type="text" class="form-control" placeholder="Search products by SKU or panel name..." oninput="filterCatalogue(this.value)">
+  </div>
+  <div id="catalogue-list" class="px-3 pb-4"></div>
 </div>
 
 <div id="view-tracking" class="hidden">
@@ -693,8 +930,8 @@
             <div id="alloc-project-name" class="form-control mb-3 bg-light">-</div>
 
             <div id="alloc-prod-wrapper" class="hidden">
-                <label class="small fw-bold text-muted mb-1">2. SELECT PRODUCT</label>
-                <select id="alloc-product-select" class="form-select mb-3"></select>
+                <label class="small fw-bold text-muted mb-1">2. SELECT PRODUCTS (tick all you are cutting from this sheet)</label>
+                <div id="alloc-product-checkboxes" class="border rounded p-2 mb-3" style="max-height:200px; overflow-y:auto;"></div>
             </div>
 
             <label class="small fw-bold text-muted mb-1">3. QUANTITY TO USE</label>
@@ -851,6 +1088,44 @@
     </div>
   </div>
 
+  <!-- Add Item Modal -->
+  <div class="modal fade" id="addItemModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+      <div class="modal-content border-0 shadow">
+        <div class="modal-header border-0 pb-0">
+          <h5 class="modal-title fw-bold" id="addItemModalTitle">Add Item</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body" id="addItemFields" style="overflow-y: auto; max-height: 72vh;">
+          <input type="hidden" id="addItemModal-type">
+        </div>
+        <div class="modal-footer border-0 pt-0 gap-2">
+          <button type="button" class="btn btn-light rounded-pill flex-grow-1" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" class="btn btn-dark rounded-pill flex-grow-1 fw-bold" onclick="commitAddItem()">Save Item</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Track Progress Modal -->
+<div class="modal fade" id="progressModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header border-0 pb-0">
+        <div>
+          <h5 class="modal-title fw-bold">Track Progress</h5>
+          <small class="text-muted" id="progressTitle"></small>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="progressBody">Loading...</div>
+      <div class="modal-footer border-0 pt-0">
+        <button type="button" class="btn btn-dark rounded-pill w-100" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
   <!-- Manufacturing Gate Check Modal -->
 <div class="modal fade" id="gateModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
@@ -927,6 +1202,180 @@
 </div>
 
 
-  
+  <!-- Optimise Delivery Modal -->
+  <div class="modal fade" id="optimiseModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-lg">
+      <div class="modal-content border-0 shadow">
+        <div class="modal-header border-0 pb-0">
+          <div>
+            <h5 class="modal-title fw-bold">Optimise Delivery Schedule</h5>
+            <small class="text-muted">Split all pending items across van trips by weight</small>
+          </div>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="d-flex align-items-end gap-3 mb-4">
+            <div class="flex-grow-1">
+              <label class="form-label fw-semibold small text-uppercase text-muted" for="optim-max-weight">Max Van Capacity (kg)</label>
+              <input type="number" class="form-control form-control-lg" id="optim-max-weight"
+                     placeholder="e.g. 1200" min="1" step="50"
+                     onkeydown="if(event.key==='Enter') runDelivOptimisation()">
+            </div>
+            <button class="btn btn-dark rounded-pill px-4 py-2 fw-bold" style="white-space:nowrap;" onclick="runDelivOptimisation()">Calculate ⚖</button>
+          </div>
+          <div id="optim-results"></div>
+        </div>
+        <div class="modal-footer border-0 pt-0">
+          <button type="button" class="btn btn-light rounded-pill px-4" data-bs-dismiss="modal">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Declare Surplus Modal -->
+  <div class="modal fade" id="declareSurplusModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content border-0 shadow">
+        <div class="modal-header border-0 pb-0">
+          <div>
+            <h5 class="modal-title fw-bold">Declare Surplus Panels</h5>
+            <small class="text-muted" id="surplus-modal-subtitle"></small>
+          </div>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="surplus-source-sku">
+          <input type="hidden" id="surplus-source-order">
+          <input type="hidden" id="surplus-family-code">
+          <input type="hidden" id="surplus-already-processed">
+          <div class="mb-3">
+            <label class="form-label fw-semibold small text-uppercase text-muted">Panel</label>
+            <input type="text" class="form-control" id="surplus-panel-name" readonly>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold small text-uppercase text-muted">Panel Family</label>
+            <input type="text" class="form-control" id="surplus-family-display" readonly>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold small text-uppercase text-muted">Quantity to Declare as Surplus</label>
+            <input type="number" class="form-control" id="surplus-qty" min="1" placeholder="e.g. 30">
+          </div>
+          <div id="surplus-not-processed-warning" class="alert alert-info py-2 small hidden">
+            These panels have <strong>not yet been cut</strong> — declaring surplus will reduce the required quantity for this order only. Nothing will be added to surplus stock.
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold small text-uppercase text-muted">Notes (optional)</label>
+            <input type="text" class="form-control" id="surplus-notes" placeholder="e.g. Site A does not require headboards">
+          </div>
+        </div>
+        <div class="modal-footer border-0 pt-0 gap-2">
+          <button type="button" class="btn btn-light rounded-pill flex-grow-1" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" class="btn btn-dark rounded-pill flex-grow-1 fw-bold" onclick="submitDeclareSurplus()">Confirm</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Allocate from Surplus Modal -->
+  <div class="modal fade" id="allocateSurplusModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+      <div class="modal-content border-0 shadow">
+        <div class="modal-header border-0 pb-0">
+          <div>
+            <h5 class="modal-title fw-bold">Allocate from Surplus</h5>
+            <small class="text-muted" id="alloc-surplus-subtitle"></small>
+          </div>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body" id="alloc-surplus-body">Loading...</div>
+        <div class="modal-footer border-0 pt-0 gap-2">
+          <button type="button" class="btn btn-light rounded-pill flex-grow-1" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" class="btn btn-dark rounded-pill flex-grow-1 fw-bold" id="alloc-surplus-confirm-btn" onclick="submitAllocateSurplus()">Allocate</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Mark as Delivered Modal -->
+  <div class="modal fade" id="delivMarkModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+      <div class="modal-content border-0 shadow">
+        <div class="modal-header border-0 pb-0">
+          <div>
+            <h5 class="modal-title fw-bold">Mark as Delivered</h5>
+            <small class="text-muted" id="deliv-mark-subtitle"></small>
+          </div>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body" id="deliv-mark-body">Loading...</div>
+        <div class="modal-footer border-0 pt-0 gap-2">
+          <button type="button" class="btn btn-light rounded-pill flex-grow-1" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" class="btn btn-dark rounded-pill flex-grow-1 fw-bold" id="deliv-mark-confirm-btn">Mark Delivered ✓</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Assign New Task Modal -->
+  <div class="modal fade" id="addTaskModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content border-0 shadow">
+        <div class="modal-header border-0 pb-0">
+          <h5 class="modal-title fw-bold">Assign New Task</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="small fw-bold text-muted mb-1">TASK <span class="text-danger">*</span></label>
+            <textarea id="task-desc" class="form-control" rows="3" placeholder="Describe the task..."></textarea>
+          </div>
+          <div class="mb-3">
+            <label class="small fw-bold text-muted mb-1">ASSIGN TO <span class="text-danger">*</span> <span class="fw-normal text-muted">(tap to select, multiple allowed)</span></label>
+            <div id="task-assigned-to-pills" class="d-flex flex-wrap gap-2 mt-1">
+              <button type="button" class="btn btn-outline-secondary rounded-pill btn-sm assignee-pill" data-name="Ben">Ben</button>
+              <button type="button" class="btn btn-outline-secondary rounded-pill btn-sm assignee-pill" data-name="Adam">Adam</button>
+              <button type="button" class="btn btn-outline-secondary rounded-pill btn-sm assignee-pill" data-name="Ian">Ian</button>
+              <button type="button" class="btn btn-outline-secondary rounded-pill btn-sm assignee-pill" data-name="Rufus">Rufus</button>
+              <button type="button" class="btn btn-outline-secondary rounded-pill btn-sm assignee-pill" data-name="Theo">Theo</button>
+              <button type="button" class="btn btn-outline-secondary rounded-pill btn-sm assignee-pill" data-name="David">David</button>
+              <button type="button" class="btn btn-outline-secondary rounded-pill btn-sm assignee-pill" data-name="Eli">Eli</button>
+              <button type="button" class="btn btn-outline-secondary rounded-pill btn-sm assignee-pill" data-name="Tom">Tom</button>
+              <button type="button" class="btn btn-outline-secondary rounded-pill btn-sm assignee-pill" data-name="Allan">Allan</button>
+              <button type="button" class="btn btn-outline-secondary rounded-pill btn-sm assignee-pill" data-name="Peter">Peter</button>
+            </div>
+          </div>
+          <div class="mb-3">
+            <label class="small fw-bold text-muted mb-1">ASSIGNED BY <span class="text-danger">*</span></label>
+            <select id="task-assigned-by" class="form-select">
+              <option value="">Select person...</option>
+              <option>Ben</option><option>Adam</option><option>Ian</option><option>Rufus</option>
+              <option>Theo</option><option>David</option><option>Eli</option><option>Tom</option>
+              <option>Allan</option><option>Peter</option>
+            </select>
+          </div>
+          <div class="row g-2 mb-1">
+            <div class="col">
+              <label class="small fw-bold text-muted mb-1">PRIORITY <span class="text-danger">*</span></label>
+              <select id="task-priority" class="form-select">
+                <option value="">Select...</option>
+                <option>Low</option>
+                <option>Medium</option>
+                <option>High</option>
+              </select>
+            </div>
+            <div class="col">
+              <label class="small fw-bold text-muted mb-1">DUE DATE</label>
+              <input type="date" id="task-due-date" class="form-control">
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer border-0 pt-0 gap-2">
+          <button type="button" class="btn btn-light rounded-pill flex-grow-1" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" class="btn btn-dark rounded-pill flex-grow-1 fw-bold" onclick="commitAddTask()">Assign Task</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
 </body>
 </html>
