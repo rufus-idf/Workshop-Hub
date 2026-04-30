@@ -33,6 +33,7 @@ function updateManufactureHub() {
 
   const orderSheet = orderSpreadsheet.getSheetByName(ORDER_TAB_NAME);
   const productSheet = productSpreadsheet.getSheetByName(PRODUCT_TAB_NAME);
+  const compProductSheet = productSpreadsheet.getSheetByName("Components");
   const hubSheet = ss.getSheetByName(HUB_TAB_NAME);
   const compSheet = ss.getSheetByName(COMP_TAB_NAME);
   const delivSheet = ss.getSheetByName(DELIV_TAB_NAME);
@@ -69,6 +70,18 @@ function updateManufactureHub() {
     productMap[recipeSku].push(prodRow);
   }
 
+  const componentMap = {};
+  if (compProductSheet) {
+    const compProductData = compProductSheet.getDataRange().getValues();
+    for (let p = 1; p < compProductData.length; p++) {
+      const compProdRow = compProductData[p];
+      const recipeSku = String(compProdRow[0] || "").trim();
+      if (!recipeSku) continue;
+      if (!componentMap[recipeSku]) componentMap[recipeSku] = [];
+      componentMap[recipeSku].push(compProdRow);
+    }
+  }
+
   let rowsForPanels = [];
   let rowsForComponents = [];
   let rowsForDelivery = [];
@@ -96,7 +109,7 @@ function updateManufactureHub() {
   for (let i = 1; i < compData.length; i++) {
     const row = compData[i];
     if (!row[0]) continue;
-    const key = buildKey([row[0], row[2], row[3], row[4]]);
+    const key = buildKey([row[0], row[2], row[3]]);
     existingCompKeys.add(key);
   }
 
@@ -141,57 +154,58 @@ const allocatedUnits = allocMatch ? (parseInt(allocMatch[1], 10) || 0) : 0;
 
     // --- SEARCH PRODUCT MAP ---
     const productRows = productMap[orderSku] || [];
-    if (productRows.length > 0) {
+    const compProductRows = componentMap[orderSku] || [];
+    if (productRows.length > 0 || compProductRows.length > 0) {
       skuFound = true;
       const seenPanels = new Set();
-      const seenComps = new Set();
 
+      // Process panels from Panels tab
       productRows.forEach((prodRow) => {
-        const itemName = prodRow[2];      
-        const material = String(prodRow[3]).toLowerCase(); 
-        const qtyPerUnit = prodRow[6];    
+        const itemName = prodRow[2];
+        const material = String(prodRow[3]).toLowerCase();
+        const qtyPerUnit = prodRow[7];
         const totalQty = qtyPerUnit * orderQty;
-        const compSKU = String(orderSku).trim().toUpperCase();       
-        const partSignature = `${itemName}|${material}|${prodRow[7]}|${prodRow[8]}`;
-        const panelKey = buildKey([orderId, productName, itemName, prodRow[3], prodRow[4], prodRow[5]]);
-        const compKey = buildKey([orderId, productName, itemName, orderSku]);
+        const partSignature = `${itemName}|${material}|${prodRow[8]}|${prodRow[9]}`;
+        const panelKey = buildKey([orderId, productName, itemName, prodRow[3], prodRow[5], prodRow[6]]);
 
-        // Split Logic
-        if (material.includes("component") || material.includes("hardware")) {
-          if (seenComps.has(partSignature)) return;
-          seenComps.add(partSignature);
-          if (existingCompKeys.has(compKey)) return;
-          const prefillComps = Math.min(totalQty, (Number(qtyPerUnit) || 1) * allocatedUnits);
+        if (seenPanels.has(partSignature)) return;
+        seenPanels.add(partSignature);
+        if (existingPanelKeys.has(panelKey)) return;
 
-rowsForComponents.push([
-  orderId,
-  customer,
-  productName,
-  itemName,
-  compSKU,
-  qtyPerUnit,
-  totalQty,
-  prefillComps,  // ✅ qtyPacked
-  "",
-  ""
-]);
-        } else {
-          if (seenPanels.has(partSignature)) return;
-          seenPanels.add(partSignature);
-          if (existingPanelKeys.has(panelKey)) return;
-          const prefillPanels = Math.min(totalQty, (Number(qtyPerUnit) || 1) * allocatedUnits);
+        const prefillPanels = Math.min(totalQty, (Number(qtyPerUnit) || 1) * allocatedUnits);
+        rowsForPanels.push([
+          orderId, customer, productName, orderSku.toUpperCase(),
+          itemName, prodRow[3], qtyPerUnit, prodRow[5], prodRow[6], prodRow[8], prodRow[9],
+          totalQty,
+          prefillPanels,   // qtyCut
+          prefillPanels,   // qtyProcessed
+          prefillPanels,   // qtyEdgeFinish
+          prefillPanels,   // qtyPacked
+          "", "", ""
+        ]);
+      });
 
-rowsForPanels.push([
-  orderId, customer, productName, orderSku.toUpperCase(),
-  itemName, prodRow[3], qtyPerUnit, prodRow[4], prodRow[5], prodRow[7], prodRow[8],
-  totalQty,
-  prefillPanels,   // qtyCut
-  prefillPanels,   // qtyProcessed
-  prefillPanels,   // qtyEdgeFinish
-  prefillPanels,   // qtyPacked
-  "", "", ""
-]);
-        }
+      // Process components from Components tab
+      compProductRows.forEach((compRow) => {
+        const itemName = String(compRow[2] || "").trim();
+        const itemCode = String(compRow[3] || "").trim();
+        const qtyPerUnit = Number(compRow[4]) || 1;
+        const totalQty = qtyPerUnit * orderQty;
+        const compKey = buildKey([orderId, productName, itemName]);
+
+        if (existingCompKeys.has(compKey)) return;
+        existingCompKeys.add(compKey);
+
+        const prefillComps = Math.min(totalQty, qtyPerUnit * allocatedUnits);
+        rowsForComponents.push([
+          orderId, customer, productName,
+          itemName,
+          itemCode,
+          qtyPerUnit,
+          totalQty,
+          prefillComps,  // qtyPacked
+          "", ""
+        ]);
       });
     }
 
@@ -289,6 +303,7 @@ function importApprovedShopifyRow_(shopifyRowIndex, mergeTargetOrderId) {
   const prodSS = SpreadsheetApp.openById(PRODUCT_RECIPE_SHEET_ID);
   const productSheet = prodSS.getSheetByName(PRODUCT_RECIPE_TAB_NAME);
   if (!productSheet) throw new Error("Product recipe tab not found.");
+  const compProductSheet = prodSS.getSheetByName("Components");
 
   const lastCol = orderSheet.getLastColumn();
   const headers = orderSheet.getRange(1, 1, 1, lastCol).getValues()[0].map(h => _normTxt(h).toLowerCase());
@@ -332,6 +347,19 @@ function importApprovedShopifyRow_(shopifyRowIndex, mergeTargetOrderId) {
     if (!productMap[recipeSku]) productMap[recipeSku] = [];
     productMap[recipeSku].push(prodRow);
   }
+
+  const componentMap = {};
+  if (compProductSheet) {
+    const compProductData = compProductSheet.getDataRange().getValues();
+    for (let p = 1; p < compProductData.length; p++) {
+      const compProdRow = compProductData[p];
+      const recipeSku = String(compProdRow[0] || "").trim();
+      if (!recipeSku) continue;
+      if (!componentMap[recipeSku]) componentMap[recipeSku] = [];
+      componentMap[recipeSku].push(compProdRow);
+    }
+  }
+
   const rowsForPanels = [];
   const rowsForComponents = [];
   const rowsForDelivery = [];
@@ -343,7 +371,6 @@ function importApprovedShopifyRow_(shopifyRowIndex, mergeTargetOrderId) {
 
   // --- DEDUPLICATION TRACKERS (Prevent double import) ---
   const seenPanels = new Set();
-  const seenComps = new Set();
 
   const buildKey = (parts) => parts.map(p => String(p ?? "").trim().toLowerCase()).join("|");
 
@@ -359,7 +386,7 @@ function importApprovedShopifyRow_(shopifyRowIndex, mergeTargetOrderId) {
   for (let i = 1; i < compData.length; i++) {
     const row = compData[i];
     if (_normTxt(row[0]) !== orderId) continue;
-    const key = buildKey([row[0], row[2], row[3], row[4]]);
+    const key = buildKey([row[0], row[2], row[3]]);
     existingCompKeys.add(key);
   }
 
@@ -372,52 +399,58 @@ function importApprovedShopifyRow_(shopifyRowIndex, mergeTargetOrderId) {
   }
 
   const productRows = productMap[orderSku] || [];
+  const compProductRows = componentMap[orderSku] || [];
+
+  // Process panels from Panels tab
   productRows.forEach((prodRow) => {
     skuFound = true;
     const itemName = prodRow[2];
     const material = String(prodRow[3] || "").toLowerCase();
-    const qtyPerUnit = Number(prodRow[6]) || 1;
+    const qtyPerUnit = Number(prodRow[7]) || 1;
     const totalQty = qtyPerUnit * orderQty;
 
-    // Unique ID for this part: ItemName + Material + Length + Width
-    const partSignature = itemName + "|" + material + "|" + prodRow[7] + "|" + prodRow[8];
-    const panelKey = buildKey([orderId, productName, itemName, prodRow[3], prodRow[4], prodRow[5]]);
-    const compKey = buildKey([orderId, productName, itemName, orderSku]);
+    const partSignature = itemName + "|" + material + "|" + prodRow[8] + "|" + prodRow[9];
+    const panelKey = buildKey([orderId, productName, itemName, prodRow[3], prodRow[5], prodRow[6]]);
 
-    if (material.includes("component") || material.includes("hardware")) {
-      // IGNORE DUPLICATES
-      if (seenComps.has(partSignature)) return;
-      seenComps.add(partSignature);
-      if (existingCompKeys.has(compKey)) return;
+    if (seenPanels.has(partSignature)) return;
+    seenPanels.add(partSignature);
+    if (existingPanelKeys.has(panelKey)) return;
 
-      const prefillComps = Math.min(totalQty, qtyPerUnit * allocatedUnits);
-      rowsForComponents.push([
-        orderId, customer, productName,
-        itemName,
-        String(orderSku).trim().toUpperCase(),
-        qtyPerUnit,
-        totalQty,
-        prefillComps, // qtyPacked
-        "", ""
-      ]);
-    } else {
-      // IGNORE DUPLICATES
-      if (seenPanels.has(partSignature)) return;
-      seenPanels.add(partSignature);
-      if (existingPanelKeys.has(panelKey)) return;
+    const prefillPanels = Math.min(totalQty, qtyPerUnit * allocatedUnits);
+    rowsForPanels.push([
+      orderId, customer, productName, String(orderSku).trim().toUpperCase(),
+      itemName, prodRow[3], qtyPerUnit, prodRow[5], prodRow[6], prodRow[8], prodRow[9],
+      totalQty,
+      prefillPanels, // cut
+      prefillPanels, // processed
+      prefillPanels, // edge
+      prefillPanels, // packed
+      "", "", ""
+    ]);
+  });
 
-      const prefillPanels = Math.min(totalQty, qtyPerUnit * allocatedUnits);
-      rowsForPanels.push([
-        orderId, customer, productName, String(orderSku).trim().toUpperCase(),
-        itemName, prodRow[3], qtyPerUnit, prodRow[4], prodRow[5], prodRow[7], prodRow[8],
-        totalQty,
-        prefillPanels, // cut
-        prefillPanels, // processed
-        prefillPanels, // edge
-        prefillPanels, // packed
-        "", "", ""
-      ]);
-    }
+  // Process components from Components tab
+  compProductRows.forEach((compRow) => {
+    skuFound = true;
+    const itemName = String(compRow[2] || "").trim();
+    const itemCode = String(compRow[3] || "").trim();
+    const qtyPerUnit = Number(compRow[4]) || 1;
+    const totalQty = qtyPerUnit * orderQty;
+    const compKey = buildKey([orderId, productName, itemName]);
+
+    if (existingCompKeys.has(compKey)) return;
+    existingCompKeys.add(compKey);
+
+    const prefillComps = Math.min(totalQty, qtyPerUnit * allocatedUnits);
+    rowsForComponents.push([
+      orderId, customer, productName,
+      itemName,
+      itemCode,
+      qtyPerUnit,
+      totalQty,
+      prefillComps, // qtyPacked
+      "", ""
+    ]);
   });
 
   if (!skuFound) throw new Error("SKU not found in product recipe sheet: " + orderSku);
