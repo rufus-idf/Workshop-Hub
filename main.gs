@@ -9,11 +9,15 @@ function doGet() {
 }
 
 function getDriveLogoDataUri_() {
-  const logoFileId = '1091teRqeYeBZ-v601l15lCl7iPjyjOu5';
-  const logoBlob = DriveApp.getFileById(logoFileId).getBlob();
-  const contentType = logoBlob.getContentType() || 'image/png';
-  const base64Data = Utilities.base64Encode(logoBlob.getBytes());
-  return `data:${contentType};base64,${base64Data}`;
+  try {
+    const logoFileId = '17w396Wt457eccDZrqiEkK1Y8l6YtAYIu';
+    const logoBlob = DriveApp.getFileById(logoFileId).getBlob();
+    const contentType = logoBlob.getContentType() || 'image/png';
+    const base64Data = Utilities.base64Encode(logoBlob.getBytes());
+    return `data:${contentType};base64,${base64Data}`;
+  } catch (e) {
+    return '';
+  }
 }
 
 // THE GLUE: This allows us to inject CSS and JS files into Index.html
