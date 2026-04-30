@@ -2740,6 +2740,42 @@ function addComponentItem(data) {
   return sheet.getLastRow();
 }
 
+function updateComponentItem(data, callerUser) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    const rowIndex = Number(data && data.rowIndex);
+    if (!rowIndex || rowIndex < 2) throw new Error("Invalid component row.");
+
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName("Component Stock");
+    if (!sheet) throw new Error("Component Stock tab missing");
+
+    const itemCode = String((data && data.itemCode) || "").trim();
+    const name = String((data && data.name) || "").trim();
+    const category = String((data && data.category) || "").trim();
+    const supplier = String((data && data.supplier) || "").trim();
+    const stock = Number(data && data.stock);
+    const onOrder = Number(data && data.onOrder);
+    const price = Number(data && data.price);
+    const link = String((data && data.link) || "").trim();
+
+    if (!name) throw new Error("Component name is required.");
+    if (!isFinite(stock) || stock < 0) throw new Error("Stock must be 0 or higher.");
+    if (!isFinite(onOrder) || onOrder < 0) throw new Error("On order must be 0 or higher.");
+    if (!isFinite(price) || price < 0) throw new Error("Price must be 0 or higher.");
+
+    sheet.getRange(rowIndex, 1, 1, 8).setValues([[
+      itemCode, name, category, supplier, stock, onOrder, price, link
+    ]]);
+
+    logStockTransaction(name, 0, "Component details edited", "Component Stock", callerUser);
+    return "Success";
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function addEdgeBandItem(data) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = ss.getSheetByName("Edge Band Stock");
