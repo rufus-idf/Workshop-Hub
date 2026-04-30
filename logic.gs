@@ -2776,6 +2776,83 @@ function updateComponentItem(data, callerUser) {
   }
 }
 
+function updateWoodItem(data, callerUser) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    const rowIndex = Number(data && data.rowIndex);
+    if (!rowIndex || rowIndex < 2) throw new Error("Invalid wood row.");
+
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName("Wood Stock");
+    if (!sheet) throw new Error("Wood Stock tab missing");
+
+    const material = String((data && data.material) || "").trim();
+    const colourCode = String((data && data.colourCode) || "").trim();
+    const length = Number(data && data.length);
+    const width = Number(data && data.width);
+    const onOrder = Number(data && data.onOrder);
+    const qty = Number(data && data.qty);
+    const price = Number(data && data.price);
+
+    if (!material) throw new Error("Material is required.");
+    if (!colourCode) throw new Error("Colour code is required.");
+    if (!isFinite(length) || length <= 0) throw new Error("Length must be greater than 0.");
+    if (!isFinite(width) || width <= 0) throw new Error("Width must be greater than 0.");
+    if (!isFinite(onOrder) || onOrder < 0) throw new Error("On order must be 0 or higher.");
+    if (!isFinite(qty) || qty < 0) throw new Error("Stock qty must be 0 or higher.");
+    if (!isFinite(price) || price < 0) throw new Error("Price must be 0 or higher.");
+
+    sheet.getRange(rowIndex, 1, 1, 7).setValues([[
+      material, colourCode, length, width, onOrder, qty, price
+    ]]);
+    logStockTransaction(material, 0, "Wood details edited", "Wood Stock", callerUser);
+    return "Success";
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function updateEdgeBandItem(data, callerUser) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    const rowIndex = Number(data && data.rowIndex);
+    if (!rowIndex || rowIndex < 2) throw new Error("Invalid edge band row.");
+
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName("Edge Band Stock");
+    if (!sheet) throw new Error("Edge Band Stock tab missing");
+
+    const map = getEdgeBandColumnMap_(sheet);
+    const material = String((data && data.material) || "").trim();
+    const thickness = Number(data && data.thickness);
+    const rollLength = Number(data && data.rollLength);
+    const onOrder = Number(data && data.onOrder);
+    const rolls = Number(data && data.rolls);
+    const price = Number(data && data.price);
+
+    if (!material) throw new Error("Material is required.");
+    if (!isFinite(thickness) || thickness <= 0) throw new Error("Thickness must be greater than 0.");
+    if (!isFinite(rollLength) || rollLength <= 0) throw new Error("Roll length must be greater than 0.");
+    if (!isFinite(onOrder) || onOrder < 0) throw new Error("On order must be 0 or higher.");
+    if (!isFinite(rolls) || rolls < 0) throw new Error("Rolls must be 0 or higher.");
+    if (!isFinite(price) || price < 0) throw new Error("Price must be 0 or higher.");
+
+    sheet.getRange(rowIndex, map.material).setValue(material);
+    sheet.getRange(rowIndex, map.thickness).setValue(thickness);
+    sheet.getRange(rowIndex, map.rollLength).setValue(rollLength);
+    sheet.getRange(rowIndex, map.onOrder).setValue(onOrder);
+    sheet.getRange(rowIndex, map.rolls).setValue(rolls);
+    if (map.price) sheet.getRange(rowIndex, map.price).setValue(price);
+
+    logStockTransaction(`Edge: ${material} | ${thickness}mm | ${rollLength}m`, 0, "Edge details edited", "Edge Band Stock", callerUser);
+    return "Success";
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function addEdgeBandItem(data) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = ss.getSheetByName("Edge Band Stock");
