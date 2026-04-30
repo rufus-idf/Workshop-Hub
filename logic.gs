@@ -1,3 +1,4 @@
+const DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1498336458258513971/i7T7hLbe_EWlxKDUMvwyqoezT7ixZ9FF0_BYWdkOVWeysGMhWj8J2CA2S8V9VzYSRIyG";
 const SHOPIFY_ORDERS_SHEET_ID = "1KDDVnIZ5oCruCY4nyKp6XVqwWnL7-N6f-pKAD3xXo_U";
 const SHOPIFY_ORDERS_TAB_NAME = "Sheet1";
 const FURNITURE_STOCK_TAB_NAME = "Furniture Stock";
@@ -36,7 +37,8 @@ function getEdgeBandColumnMap_(sheet) {
     thickness: findIndex(["thickness (mm)", "thickness"], 2),
     rollLength: findIndex(["roll length", "roll length (m)"], 3),
     onOrder: findIndex(["rolls on order", "on order"], 4),
-    rolls: findIndex(["rolls in stock", "in stock"], 5)
+    rolls: findIndex(["rolls in stock", "in stock"], 5),
+    price: findIndex(["price", "price (£)", "cost per roll", "cost"], null)
   };
 }
 
@@ -194,6 +196,10 @@ function getExternalOffcutInventory_() {
 }
 
 function canonicalRoomName_(v) {
+  // Google Sheets auto-converts values like "3/1" to Date objects — recover them as D/M strings
+  if (v instanceof Date && !isNaN(v.getTime())) {
+    v = (v.getDate()) + '/' + (v.getMonth() + 1);
+  }
   const cleaned = squeezeSpaces_(v);
   if (!cleaned) return "";
 
@@ -604,6 +610,7 @@ function _buildDataTree_(applyCustomMerges) {
     _addOrderNoteEntries_(orderObj, orderId, notesMap[orderId]);
     const ensured = _ensureTreeProduct_(orderObj, product, orderId);
 
+    if (!ensured.value.sku) ensured.value.sku = norm(row[3]);
     ensured.value.panels.push({
       rowIndex: index + 2,
       sourceOrderId: orderId,
@@ -686,7 +693,7 @@ function getDataTree() {
 }
 
 // 3. UPDATE QUANTITIES (Robust Dynamic Version)
-function updateQty(rowIndex, colName, value) {
+function updateQty(rowIndex, colName, value, callerUser) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = ss.getSheetByName("Manufacture Hub");
   const logSheet = ss.getSheetByName("Activity Log"); 
@@ -708,8 +715,7 @@ function updateQty(rowIndex, colName, value) {
 
   if (colIndex > 0) {
     const timestamp = new Date();
-    let userEmail = Session.getActiveUser().getEmail();
-    if (userEmail === "") userEmail = "Workshop App User"; 
+    let userEmail = (callerUser && String(callerUser).trim()) ? String(callerUser).trim() : (Session.getActiveUser().getEmail() || "Workshop App User");
 
     // 2. UPDATE THE QUANTITY
     const previousValue = Number(sheet.getRange(rowIndex, colIndex).getValue()) || 0;
@@ -838,7 +844,7 @@ function getPanelHistorySheet_() {
   return sheet;
 }
 
-function markPanelDamaged(rowIndex, qty, reason) {
+function markPanelDamaged(rowIndex, qty, reason, callerUser) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = ss.getSheetByName("Manufacture Hub");
   if (!sheet) throw new Error("Sheet 'Manufacture Hub' missing");
@@ -872,7 +878,7 @@ function markPanelDamaged(rowIndex, qty, reason) {
     const qtyOrder = Number(rowData[colQtyOrder - 1]) || 0;
 
     const timestamp = new Date();
-    const userEmail = Session.getActiveUser().getEmail() || "Workshop App User";
+    const userEmail = (callerUser && String(callerUser).trim()) ? String(callerUser).trim() : (Session.getActiveUser().getEmail() || "Workshop App User");
 
     sheet.getRange(rowIndex, colQtyOrder).setValue(qtyOrder + qtyNum);
 
@@ -897,12 +903,12 @@ function markPanelDamaged(rowIndex, qty, reason) {
 }
 
 // 4. PROCESS PANEL UPDATES (Robust Dynamic + Safe Lock + Array Return + Delta Fix)
-function processBatch(updates) {
+function processBatch(updates, callerUser) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = ss.getSheetByName("Manufacture Hub");
   if (!sheet) throw new Error("Sheet 'Manufacture Hub' missing");
 
-  let userEmail = Session.getActiveUser().getEmail() || "Workshop App";
+  let userEmail = (callerUser && String(callerUser).trim()) ? String(callerUser).trim() : (Session.getActiveUser().getEmail() || "Workshop App");
   const timestamp = new Date();
 
   // 1. DYNAMIC COLUMN MAPPING
@@ -939,9 +945,17 @@ function processBatch(updates) {
       if (colName === 'packed') headerName = "qty packed";
 
       const colIndex = map[headerName];
-      
+
       if (colIndex > 0) {
-        const previousValue = Number(sheet.getRange(rowIndex, colIndex).getValue()) || 0;
+        const currentVal = Number(sheet.getRange(rowIndex, colIndex).getValue()) || 0;
+
+        // Conflict detection: base is what the client last saw; if the sheet has moved on, someone else saved first
+        if (item.base !== undefined && currentVal !== (Number(item.base) || 0)) {
+          results.push({ rowIndex, colName, value: currentVal, conflict: true });
+          return; // skip this update
+        }
+
+        const previousValue = currentVal;
         // Update Quantity
         sheet.getRange(rowIndex, colIndex).setValue(value);
         
@@ -1003,7 +1017,7 @@ function calculateSets(rows) {
   return minSets;
 }
 
-function processComponentBatch(updates) {
+function processComponentBatch(updates, callerUser) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = ss.getSheetByName("Components Hub");
   if (!sheet) throw new Error("Sheet 'Components Hub' missing");
@@ -1016,8 +1030,9 @@ function processComponentBatch(updates) {
   lock.waitLock(20000);
 
   const cache = CacheService.getScriptCache();
-  const userEmail = Session.getActiveUser().getEmail() || "Workshop App";
+  const userEmail = (callerUser && String(callerUser).trim()) ? String(callerUser).trim() : (Session.getActiveUser().getEmail() || "Workshop App");
   const results = [];
+  const packedTargets = new Map();
 
   try {
     const stockMap = {};
@@ -1119,7 +1134,20 @@ function processComponentBatch(updates) {
 
       if (opId) cache.put("op:" + opId, "1", 21600); // 6h
       results.push({ rowIndex, value: next });
+
+      // Track for furniture stock sync (any change to packed count)
+      if (next !== cur) {
+        const infoRow = sheet.getRange(rowIndex, 1, 1, 3).getValues()[0];
+        const oid = _normTxt(infoRow[0]);
+        const pname = _normTxt(infoRow[2]);
+        if (oid && pname) packedTargets.set(`${oid}||${pname}`, { orderId: oid, productName: pname });
+      }
     });
+
+    // Trigger furniture stock sync for any workshop stock products with changed component packs
+    if (packedTargets.size > 0 && hubSheet && hubSheet.getLastRow() > 1) {
+      syncProductCompletions_(hubSheet.getDataRange().getValues(), Array.from(packedTargets.values()));
+    }
 
     SpreadsheetApp.flush();
     return results;
@@ -1338,6 +1366,46 @@ function _classifyMaterial_(material) {
   return "unknown";
 }
 
+/**
+ * Reads the "Yield Rules" tab from the product recipe spreadsheet.
+ * Returns rules indexed by SKU (uppercase):
+ *   { "SKU": { wood: [{ material, sheetsPerUnit }], edge: [{ material, metersPerUnit }] }, ... }
+ *
+ * Edge material names must match the format "{Stock Material} {Thickness}mm"
+ * e.g. "Bardolino Edgebanding 0.8mm", "Bardolino Edgebanding 2mm"
+ */
+function loadYieldRules_(prodSS) {
+  const sheet = prodSS.getSheetByName('Yield Rules');
+  if (!sheet) { console.warn('[YieldRules] No "Yield Rules" tab found in product sheet.'); return {}; }
+
+  const data = sheet.getDataRange().getValues();
+  if (data.length < 2) return {};
+
+  const headers = data[0].map(h => squeezeSpaces_(String(h)).toLowerCase());
+  const skuCol  = headers.indexOf('product sku');
+  const typeCol = headers.indexOf('type');
+  const matCol  = headers.indexOf('material');
+  const qtyCol  = headers.indexOf('qty per unit');
+
+  if ([skuCol, typeCol, matCol, qtyCol].some(i => i < 0)) {
+    throw new Error('Yield Rules tab is missing required columns: Product SKU, Type, Material, Qty Per Unit');
+  }
+
+  const rules = {};
+  for (let i = 1; i < data.length; i++) {
+    const sku      = squeezeSpaces_(String(data[i][skuCol] || '')).toUpperCase();
+    const type     = squeezeSpaces_(String(data[i][typeCol] || '')).toLowerCase();
+    const material = squeezeSpaces_(String(data[i][matCol]  || ''));
+    const qty      = Number(data[i][qtyCol]) || 0;
+    if (!sku || !material || !qty) continue;
+
+    if (!rules[sku]) rules[sku] = { wood: [], edge: [] };
+    if      (type === 'wood') rules[sku].wood.push({ material, sheetsPerUnit: qty });
+    else if (type === 'edge') rules[sku].edge.push({ material, metersPerUnit: qty });
+  }
+  return rules;
+}
+
 function getSmartOrderSummary(orderId) {
   const orderSheet = _getShopifyOrdersSheet();
   const orderValues = orderSheet.getDataRange().getValues();
@@ -1422,6 +1490,21 @@ function getSmartOrderSummary(orderId) {
     productMap[sku].push(productData[p]);
   }
 
+  // Components tab: col A=SKU, col C=Component Name, col D=Item Code, col E=Qty Per Unit
+  const componentMap = {};
+  const compProductSheet = prodSS.getSheetByName("Components");
+  if (compProductSheet) {
+    const compData = compProductSheet.getDataRange().getValues();
+    for (let p = 1; p < compData.length; p++) {
+      const sku = _normTxt(compData[p][0]).toUpperCase();
+      if (!sku) continue;
+      if (!componentMap[sku]) componentMap[sku] = [];
+      componentMap[sku].push(compData[p]);
+    }
+  }
+
+  const yieldRules = loadYieldRules_(prodSS);
+
   const inventory = getInventoryData();
   const compStockMap = {};
   const woodStockList = [];
@@ -1429,8 +1512,17 @@ function getSmartOrderSummary(orderId) {
 
   (inventory.components || []).forEach(item => {
     const nameKey = _normTxt(item.name).toLowerCase();
-    if (!nameKey) return;
-    compStockMap[nameKey] = (compStockMap[nameKey] || 0) + (Number(item.stock) || 0);
+    const codeKey = _normTxt(item.itemCode || '').toLowerCase();
+    const s = Number(item.stock) || 0;
+    const pr = Number(item.price) || 0;
+    if (nameKey) {
+      const ex = compStockMap[nameKey] || { stock: 0, price: 0 };
+      compStockMap[nameKey] = { stock: ex.stock + s, price: pr || ex.price };
+    }
+    if (codeKey && codeKey !== nameKey) {
+      const ex = compStockMap[codeKey] || { stock: 0, price: 0 };
+      compStockMap[codeKey] = { stock: ex.stock + s, price: pr || ex.price };
+    }
   });
 
   (inventory.wood || []).forEach(item => {
@@ -1446,11 +1538,43 @@ function getSmartOrderSummary(orderId) {
     const rolls = Number(item.rolls) || 0;
     edgeStockList.push({
       material: mat,
+      thickness: squeezeSpaces_(String(item.thickness || '')),
       normalized: normalizeEdgeMaterialName_(mat),
       rollLength,
       rolls,
-      stockMeters: rollLength * rolls
+      stockMeters: rollLength * rolls,
+      price: Number(item.price) || 0
     });
+  });
+
+  // Yield-rule edge lookup: "bardolino edgebanding 0.8mm" → total meters in stock.
+  // Sums across all roll sizes of the same material + thickness.
+  const yieldEdgeStockMap = {};
+  edgeStockList.forEach(item => {
+    if (!item.thickness) return;
+    const key = `${item.material} ${item.thickness}mm`.toLowerCase();
+    yieldEdgeStockMap[key] = (yieldEdgeStockMap[key] || 0) + item.stockMeters;
+  });
+
+  // Price per sheet for wood: materialKey (lowercase) → price per sheet.
+  // Uses the first non-zero price found per material.
+  const woodPriceMap = {};
+  (inventory.wood || []).forEach(item => {
+    const mat = _normTxt(item.material).toLowerCase();
+    if (mat && !woodPriceMap[mat] && (Number(item.price) || 0) > 0) {
+      woodPriceMap[mat] = Number(item.price);
+    }
+  });
+
+  // Price per meter for yield-rule edgeband: "bardolino edgebanding 0.8mm" → £/m.
+  // Derived from price per roll ÷ roll length. Uses first priced row per key.
+  const yieldEdgePricePerMeterMap = {};
+  edgeStockList.forEach(item => {
+    if (!item.thickness || !item.rollLength || !item.price) return;
+    const key = `${item.material} ${item.thickness}mm`.toLowerCase();
+    if (!yieldEdgePricePerMeterMap[key]) {
+      yieldEdgePricePerMeterMap[key] = item.price / item.rollLength;
+    }
   });
 
   const sumMatchingStock = (material, list, field) => {
@@ -1479,96 +1603,144 @@ function getSmartOrderSummary(orderId) {
     }, 0);
   };
   const totalsCompMap = {};
-  const totalsWoodMap = {};
-  const totalsEdgeMap = {};
+  const totalsWoodMap = {};      // recipe-based: material key → { material, type, area }
+  const totalsEdgeMap = {};      // recipe-based: wood-material key → { material, meters }
+  const totalsWoodYieldMap = {}; // yield-based:  material key → { material, rawSheets }
+  const totalsEdgeYieldMap = {}; // yield-based:  edgeband key → { material, meters }
 
   const products = orderLines.map(line => {
     const recipeRows = productMap[line.sku] || [];
+    const hasYield = !!yieldRules[line.sku];
     const compMap = {};
-    const woodMap = {};
-    const edgeMap = {};
+    const woodMap = {}; // per-product wood accumulator
+    const edgeMap = {}; // per-product edge accumulator
 
-    recipeRows.forEach(row => {
-      const panelName = _normTxt(row[2]);
-      const material = _normTxt(row[3]);
-      const qtyPerUnit = Number(row[6]) || 0;
+    // ---- Components: from Components tab (col C=name, col D=itemCode, col E=qtyPerUnit) ----
+    (componentMap[line.sku] || []).forEach(row => {
+      const compName   = _normTxt(row[2]);
+      const itemCode   = _normTxt(row[3]);
+      const qtyPerUnit = Number(row[4]) || 0;
       const totalUnits = qtyPerUnit * line.toBuild;
-      if (!totalUnits) return;
+      if (!totalUnits || !compName) return;
 
-      // Recipe column H / I values are already per finished product row
-      // (panel area/perimeter values include the panel quantity in column G).
-      // Only scale by how many units of the product we need to build.
-      const areaPerProduct = Number(row[7]) || 0;
-      const perimeterPerProduct = Number(row[8]) || 0;
-      const totalArea = areaPerProduct * line.toBuild;
-      const totalPerimeter = perimeterPerProduct * line.toBuild;
-      const matType = _classifyMaterial_(material);
-      const materialKey = material.toLowerCase();
+      if (!compMap[compName]) compMap[compName] = { name: compName, itemCode, qty: 0 };
+      compMap[compName].qty += totalUnits;
+      if (!totalsCompMap[compName]) totalsCompMap[compName] = { name: compName, itemCode, qty: 0 };
+      totalsCompMap[compName].qty += totalUnits;
+    });
 
-      if (matType === "component") {
-        if (!compMap[panelName]) compMap[panelName] = { name: panelName, qty: 0 };
-        compMap[panelName].qty += totalUnits;
-        if (!totalsCompMap[panelName]) totalsCompMap[panelName] = { name: panelName, qty: 0 };
-        totalsCompMap[panelName].qty += totalUnits;
-      } else {
-        if (!woodMap[materialKey]) {
-          woodMap[materialKey] = { material, type: matType, area: 0 };
-        }
+    // ---- Wood & Edge: yield rules take priority over recipe ----
+    if (hasYield) {
+      const rules = yieldRules[line.sku];
+
+      rules.wood.forEach(w => {
+        const matKey = w.material.toLowerCase();
+        if (!woodMap[matKey]) woodMap[matKey] = { material: w.material, rawSheets: 0 };
+        woodMap[matKey].rawSheets += w.sheetsPerUnit * line.toBuild;
+
+        if (!totalsWoodYieldMap[matKey]) totalsWoodYieldMap[matKey] = { material: w.material, rawSheets: 0 };
+        totalsWoodYieldMap[matKey].rawSheets += w.sheetsPerUnit * line.toBuild;
+      });
+
+      rules.edge.forEach(e => {
+        const matKey = e.material.toLowerCase();
+        if (!edgeMap[matKey]) edgeMap[matKey] = { material: e.material, meters: 0 };
+        edgeMap[matKey].meters += e.metersPerUnit * line.toBuild;
+
+        if (!totalsEdgeYieldMap[matKey]) totalsEdgeYieldMap[matKey] = { material: e.material, meters: 0 };
+        totalsEdgeYieldMap[matKey].meters += e.metersPerUnit * line.toBuild;
+      });
+
+    } else {
+      // Fall back to recipe-based area/perimeter calculation
+      recipeRows.forEach(row => {
+        const material  = _normTxt(row[3]);
+        const qtyPerUnit = Number(row[7]) || 0;
+        const totalUnits = qtyPerUnit * line.toBuild;
+        if (!totalUnits) return;
+
+        const areaPerProduct      = Number(row[8]) || 0;
+        const perimeterPerProduct = Number(row[9]) || 0;
+        const totalArea      = areaPerProduct * line.toBuild;
+        const totalPerimeter = perimeterPerProduct * line.toBuild;
+        const matType    = _classifyMaterial_(material);
+        const materialKey = material.toLowerCase();
+        if (matType === "component") return;
+
+        if (!woodMap[materialKey]) woodMap[materialKey] = { material, type: matType, area: 0 };
         woodMap[materialKey].area += totalArea;
-
-        if (!totalsWoodMap[materialKey]) {
-          totalsWoodMap[materialKey] = { material, type: matType, area: 0 };
-        }
+        if (!totalsWoodMap[materialKey]) totalsWoodMap[materialKey] = { material, type: matType, area: 0 };
         totalsWoodMap[materialKey].area += totalArea;
 
         if (matType === "mdf") {
-          if (!edgeMap[materialKey]) {
-            edgeMap[materialKey] = { material, meters: 0 };
-          }
+          if (!edgeMap[materialKey]) edgeMap[materialKey] = { material, meters: 0 };
           edgeMap[materialKey].meters += totalPerimeter;
-
-          if (!totalsEdgeMap[materialKey]) {
-            totalsEdgeMap[materialKey] = { material, meters: 0 };
-          }
+          if (!totalsEdgeMap[materialKey]) totalsEdgeMap[materialKey] = { material, meters: 0 };
           totalsEdgeMap[materialKey].meters += totalPerimeter;
         }
-      }
-    });
+      });
+    }
 
+    // ---- Build result arrays for this product ----
     const components = Object.values(compMap).map(item => {
-      const stock = compStockMap[item.name.toLowerCase()] || 0;
-      return {
-        name: item.name,
-        qty: item.qty,
-        stock,
-        short: Math.max(0, item.qty - stock)
-      };
+      const byCode  = item.itemCode ? (compStockMap[item.itemCode.toLowerCase()] || null) : null;
+      const byName  = compStockMap[item.name.toLowerCase()] || null;
+      const entry   = byCode || byName || { stock: 0, price: 0 };
+      const short = Math.max(0, item.qty - entry.stock);
+      return { name: item.name, qty: item.qty, stock: entry.stock, short, price: entry.price, totalPrice: entry.price * short };
     });
 
-    const wood = Object.values(woodMap).map(item => {
-      const sheetArea = item.type === "mdf" ? MDF_SHEET_AREA : item.type === "ply" ? PLY_SHEET_AREA : 0;
-      const sheetsNeeded = sheetArea ? Math.ceil(item.area / sheetArea) : 0;
-      const stockSheets = sumMatchingStock(item.material, woodStockList, "qty");
-      return {
-        material: item.material,
-        type: item.type,
-        area: item.area,
-        sheetArea,
-        sheetsNeeded,
-        stockSheets,
-        shortSheets: Math.max(0, sheetsNeeded - stockSheets)
-      };
-    });
+    const wood = hasYield
+      ? Object.values(woodMap).map(item => {
+          const matType      = _classifyMaterial_(item.material);
+          const sheetArea    = matType === "mdf" ? MDF_SHEET_AREA : matType === "ply" ? PLY_SHEET_AREA : 0;
+          const sheetsNeeded = Math.ceil(item.rawSheets);
+          const stockSheets  = sumMatchingStock(item.material, woodStockList, "qty");
+          const shortSheets  = Math.max(0, sheetsNeeded - stockSheets);
+          const price        = woodPriceMap[item.material.toLowerCase()] || 0;
+          return {
+            material: item.material,
+            type: matType,
+            area: parseFloat((item.rawSheets * sheetArea).toFixed(3)),
+            sheetArea,
+            sheetsNeeded,
+            stockSheets,
+            shortSheets,
+            price,
+            totalCost: parseFloat((price * shortSheets).toFixed(2))
+          };
+        })
+      : Object.values(woodMap).map(item => {
+          const sheetArea    = item.type === "mdf" ? MDF_SHEET_AREA : item.type === "ply" ? PLY_SHEET_AREA : 0;
+          const sheetsNeeded = sheetArea ? Math.ceil(item.area / sheetArea) : 0;
+          const stockSheets  = sumMatchingStock(item.material, woodStockList, "qty");
+          const shortSheets  = Math.max(0, sheetsNeeded - stockSheets);
+          const price        = woodPriceMap[item.material.toLowerCase()] || 0;
+          return { material: item.material, type: item.type, area: item.area, sheetArea, sheetsNeeded, stockSheets, shortSheets, price, totalCost: parseFloat((price * shortSheets).toFixed(2)) };
+        });
 
-    const edge = Object.values(edgeMap).map(item => {
-      const stockMeters = sumMatchingEdgeStock(item.material, edgeStockList);
-      return {
-        material: item.material,
-        meters: item.meters,
-        stockMeters,
-        shortMeters: Math.max(0, item.meters - stockMeters)
-      };
-    });
+    const edge = hasYield
+      ? Object.values(edgeMap).map(item => {
+          const matKey      = item.material.toLowerCase();
+          const stockMeters = yieldEdgeStockMap[matKey] || 0;
+          const shortMeters = parseFloat(Math.max(0, item.meters - stockMeters).toFixed(2));
+          const pricePerM   = yieldEdgePricePerMeterMap[matKey] || 0;
+          return {
+            material: item.material,
+            meters:      parseFloat(item.meters.toFixed(2)),
+            stockMeters: parseFloat(stockMeters.toFixed(2)),
+            shortMeters,
+            price:     parseFloat(pricePerM.toFixed(4)),
+            totalCost: parseFloat((pricePerM * shortMeters).toFixed(2))
+          };
+        })
+      : Object.values(edgeMap).map(item => {
+          const stockMeters = sumMatchingEdgeStock(item.material, edgeStockList);
+          const shortMeters = Math.max(0, item.meters - stockMeters);
+          const matched     = edgeStockList.find(e => e.normalized && (e.normalized === normalizeEdgeMaterialName_(item.material) || e.normalized.includes(normalizeEdgeMaterialName_(item.material))));
+          const pricePerM   = (matched && matched.price && matched.rollLength) ? matched.price / matched.rollLength : 0;
+          return { material: item.material, meters: item.meters, stockMeters, shortMeters, price: parseFloat(pricePerM.toFixed(4)), totalCost: parseFloat((pricePerM * shortMeters).toFixed(2)) };
+        });
 
     return {
       productName: line.productName,
@@ -1582,39 +1754,72 @@ function getSmartOrderSummary(orderId) {
     };
   });
 
-  const totals = {
-    components: Object.values(totalsCompMap).map(item => {
-      const stock = compStockMap[item.name.toLowerCase()] || 0;
-      return {
-        name: item.name,
-        qty: item.qty,
-        stock,
-        short: Math.max(0, item.qty - stock)
-      };
-    }),
-    wood: Object.values(totalsWoodMap).map(item => {
-      const sheetArea = item.type === "mdf" ? MDF_SHEET_AREA : item.type === "ply" ? PLY_SHEET_AREA : 0;
-      const sheetsNeeded = sheetArea ? Math.ceil(item.area / sheetArea) : 0;
-      const stockSheets = sumMatchingStock(item.material, woodStockList, "qty");
+  // Build totals: merge yield-rule entries and recipe-fallback entries.
+  // Yield-rule entries are always listed first (more accurate).
+  const totalsWoodArray = [
+    ...Object.values(totalsWoodYieldMap).map(item => {
+      const matType      = _classifyMaterial_(item.material);
+      const sheetArea    = matType === "mdf" ? MDF_SHEET_AREA : matType === "ply" ? PLY_SHEET_AREA : 0;
+      const sheetsNeeded = Math.ceil(item.rawSheets);
+      const stockSheets  = sumMatchingStock(item.material, woodStockList, "qty");
+      const shortSheets  = Math.max(0, sheetsNeeded - stockSheets);
+      const price        = woodPriceMap[item.material.toLowerCase()] || 0;
       return {
         material: item.material,
-        type: item.type,
-        area: item.area,
+        type: matType,
+        area: parseFloat((item.rawSheets * sheetArea).toFixed(3)),
         sheetArea,
         sheetsNeeded,
         stockSheets,
-        shortSheets: Math.max(0, sheetsNeeded - stockSheets)
+        shortSheets,
+        price,
+        totalCost: parseFloat((price * shortSheets).toFixed(2))
       };
     }),
-    edge: Object.values(totalsEdgeMap).map(item => {
-      const stockMeters = sumMatchingEdgeStock(item.material, edgeStockList);
+    ...Object.values(totalsWoodMap).map(item => {
+      const sheetArea    = item.type === "mdf" ? MDF_SHEET_AREA : item.type === "ply" ? PLY_SHEET_AREA : 0;
+      const sheetsNeeded = sheetArea ? Math.ceil(item.area / sheetArea) : 0;
+      const stockSheets  = sumMatchingStock(item.material, woodStockList, "qty");
+      const shortSheets  = Math.max(0, sheetsNeeded - stockSheets);
+      const price        = woodPriceMap[item.material.toLowerCase()] || 0;
+      return { material: item.material, type: item.type, area: item.area, sheetArea, sheetsNeeded, stockSheets, shortSheets, price, totalCost: parseFloat((price * shortSheets).toFixed(2)) };
+    })
+  ];
+
+  const totalsEdgeArray = [
+    ...Object.values(totalsEdgeYieldMap).map(item => {
+      const matKey      = item.material.toLowerCase();
+      const stockMeters = yieldEdgeStockMap[matKey] || 0;
+      const shortMeters = parseFloat(Math.max(0, item.meters - stockMeters).toFixed(2));
+      const pricePerM   = yieldEdgePricePerMeterMap[matKey] || 0;
       return {
         material: item.material,
-        meters: item.meters,
-        stockMeters,
-        shortMeters: Math.max(0, item.meters - stockMeters)
+        meters:      parseFloat(item.meters.toFixed(2)),
+        stockMeters: parseFloat(stockMeters.toFixed(2)),
+        shortMeters,
+        price:     parseFloat(pricePerM.toFixed(4)),
+        totalCost: parseFloat((pricePerM * shortMeters).toFixed(2))
       };
+    }),
+    ...Object.values(totalsEdgeMap).map(item => {
+      const stockMeters = sumMatchingEdgeStock(item.material, edgeStockList);
+      const shortMeters = Math.max(0, item.meters - stockMeters);
+      const matched     = edgeStockList.find(e => e.normalized && (e.normalized === normalizeEdgeMaterialName_(item.material) || e.normalized.includes(normalizeEdgeMaterialName_(item.material))));
+      const pricePerM   = (matched && matched.price && matched.rollLength) ? matched.price / matched.rollLength : 0;
+      return { material: item.material, meters: item.meters, stockMeters, shortMeters, price: parseFloat(pricePerM.toFixed(4)), totalCost: parseFloat((pricePerM * shortMeters).toFixed(2)) };
     })
+  ];
+
+  const totals = {
+    components: Object.values(totalsCompMap).map(item => {
+      const byCode  = item.itemCode ? (compStockMap[item.itemCode.toLowerCase()] || null) : null;
+      const byName  = compStockMap[item.name.toLowerCase()] || null;
+      const entry   = byCode || byName || { stock: 0, price: 0 };
+      const short = Math.max(0, item.qty - entry.stock);
+      return { name: item.name, qty: item.qty, stock: entry.stock, short, price: entry.price, totalPrice: entry.price * short };
+    }),
+    wood: totalsWoodArray,
+    edge: totalsEdgeArray
   };
 
   const totalToBuild = orderLines.reduce((sum, line) => sum + (Number(line.toBuild) || 0), 0);
@@ -1668,7 +1873,7 @@ function exportSmartOrderToSheets(orderId) {
     ])
   );
 
-  row = _writeSmartOrderTableSection_(summarySheet, row, "TOTAL WOOD REQUIREMENTS", ["Material", "Type", "Sheet Size", "Area (m²)", "Sheets Req", "In Stock", "Needed"],
+  row = _writeSmartOrderTableSection_(summarySheet, row, "TOTAL WOOD REQUIREMENTS", ["Material", "Type", "Sheet Size", "Area (m²)", "Sheets Req", "In Stock", "Needed", "Sheet Price (£)", "To Order (£)"],
     (summary.totals && summary.totals.wood ? summary.totals.wood : []).map(item => [
       item.material,
       item.type,
@@ -1678,25 +1883,31 @@ function exportSmartOrderToSheets(orderId) {
       Number(item.area) || 0,
       Number(item.sheetsNeeded) || 0,
       Number(item.stockSheets) || 0,
-      Number(item.shortSheets) || 0
+      Number(item.shortSheets) || 0,
+      Number(item.price) || 0,
+      Number(item.totalCost) || 0
     ])
   );
 
-  row = _writeSmartOrderTableSection_(summarySheet, row, "TOTAL EDGE REQUIREMENTS", ["Material", "Meters", "In Stock (m)", "Needed (m)"],
+  row = _writeSmartOrderTableSection_(summarySheet, row, "TOTAL EDGE REQUIREMENTS", ["Material", "Meters", "In Stock (m)", "Needed (m)", "Price/m (£)", "To Order (£)"],
     (summary.totals && summary.totals.edge ? summary.totals.edge : []).map(item => [
       item.material,
       Number(item.meters) || 0,
       Number(item.stockMeters) || 0,
-      Number(item.shortMeters) || 0
+      Number(item.shortMeters) || 0,
+      Number(item.price) || 0,
+      Number(item.totalCost) || 0
     ])
   );
 
-  _writeSmartOrderTableSection_(summarySheet, row, "TOTAL COMPONENT REQUIREMENTS", ["Component", "Qty Req", "In Stock", "Needed"],
+  _writeSmartOrderTableSection_(summarySheet, row, "TOTAL COMPONENT REQUIREMENTS", ["Component", "Qty Req", "In Stock", "Needed", "Unit Price (£)", "Total Cost (£)"],
     (summary.totals && summary.totals.components ? summary.totals.components : []).map(item => [
       item.name,
       Number(item.qty) || 0,
       Number(item.stock) || 0,
-      Number(item.short) || 0
+      Number(item.short) || 0,
+      Number(item.price) || 0,
+      Number(item.totalPrice) || 0
     ])
   );
 
@@ -1714,7 +1925,7 @@ function exportSmartOrderToSheets(orderId) {
     sh.getRange(r++, 1).setValue(`Generated: ${generatedOn}`);
     r += 1;
 
-    r = _writeSmartOrderTableSection_(sh, r, "WOOD", ["Material", "Type", "Sheet Size", "Area (m²)", "Sheets Req", "In Stock", "Needed"],
+    r = _writeSmartOrderTableSection_(sh, r, "WOOD", ["Material", "Type", "Sheet Size", "Area (m²)", "Sheets Req", "In Stock", "Needed", "Sheet Price (£)", "To Order (£)"],
       (prod.wood || []).map(item => [
         item.material,
         item.type,
@@ -1724,25 +1935,31 @@ function exportSmartOrderToSheets(orderId) {
         Number(item.area) || 0,
         Number(item.sheetsNeeded) || 0,
         Number(item.stockSheets) || 0,
-        Number(item.shortSheets) || 0
+        Number(item.shortSheets) || 0,
+        Number(item.price) || 0,
+        Number(item.totalCost) || 0
       ])
     );
 
-    r = _writeSmartOrderTableSection_(sh, r, "EDGEBAND", ["Material", "Meters", "In Stock (m)", "Needed (m)"],
+    r = _writeSmartOrderTableSection_(sh, r, "EDGEBAND", ["Material", "Meters", "In Stock (m)", "Needed (m)", "Price/m (£)", "To Order (£)"],
       (prod.edge || []).map(item => [
         item.material,
         Number(item.meters) || 0,
         Number(item.stockMeters) || 0,
-        Number(item.shortMeters) || 0
+        Number(item.shortMeters) || 0,
+        Number(item.price) || 0,
+        Number(item.totalCost) || 0
       ])
     );
 
-    _writeSmartOrderTableSection_(sh, r, "COMPONENTS", ["Component", "Qty Req", "In Stock", "Needed"],
+    _writeSmartOrderTableSection_(sh, r, "COMPONENTS", ["Component", "Qty Req", "In Stock", "Needed", "Unit Price (£)", "Total Cost (£)"],
       (prod.components || []).map(item => [
         item.name,
         Number(item.qty) || 0,
         Number(item.stock) || 0,
-        Number(item.short) || 0
+        Number(item.short) || 0,
+        Number(item.price) || 0,
+        Number(item.totalPrice) || 0
       ])
     );
 
@@ -1997,7 +2214,7 @@ function _getAllowedOrderIdSet_(orderIdsOrId) {
 }
 
 // 7. DELIVERY: ASSIGN ITEMS TO ROOM (Planning Phase)
-function assignToRoom(orderIdsOrId, productName, qtyToAssign, roomName) {
+function assignToRoom(orderIdsOrId, productName, qtyToAssign, roomName, callerUser) {
   roomName = canonicalRoomName_(roomName);
   if (!roomName) return "Error: Room name is required";
   const allowedOrders = _getAllowedOrderIdSet_(orderIdsOrId);
@@ -2017,7 +2234,7 @@ function assignToRoom(orderIdsOrId, productName, qtyToAssign, roomName) {
   };
 
   const data = sheet.getDataRange().getValues();
-  const user = Session.getActiveUser().getEmail() || "Workshop App";
+  const user = (callerUser && String(callerUser).trim()) ? String(callerUser).trim() : (Session.getActiveUser().getEmail() || "Workshop App");
   const ts = new Date();
 
   let assigned = 0;
@@ -2037,7 +2254,7 @@ if (normTxt(row[4]) !== "") continue; // already assigned
     if (st !== "Pending") continue;
 
     if (assigned < qtyToAssign) {
-      sheet.getRange(i + 1, 5).setValue(roomName);     // Room (E)
+      sheet.getRange(i + 1, 5).setNumberFormat('@').setValue(roomName);  // Room (E) — forced text to prevent date auto-conversion
       sheet.getRange(i + 1, 6).setValue("Pending");    // Status (F)
       sheet.getRange(i + 1, 7).setValue(user);         // Last User (G)
       sheet.getRange(i + 1, 8).setValue(ts);           // Last Updated (H)
@@ -2056,6 +2273,71 @@ if (normTxt(row[4]) !== "") continue; // already assigned
 
 }
 
+
+function bulkAssignToRooms(assignments, orderIdsOrId, callerUser) {
+  if (!Array.isArray(assignments) || assignments.length === 0) return { success: false, error: "No assignments provided" };
+
+  const allowedOrders = _getAllowedOrderIdSet_(orderIdsOrId);
+  if (!allowedOrders.ids.length) return { success: false, error: "Order ID is required" };
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName("Delivery Hub");
+    if (!sheet) return { success: false, error: "Delivery Hub missing" };
+
+    const data = sheet.getDataRange().getValues();
+    const user = (callerUser && String(callerUser).trim()) ? String(callerUser).trim() : (Session.getActiveUser().getEmail() || "Workshop App");
+    const ts = new Date();
+    const normTxt = v => String(v ?? "").replace(/ /g, " ").trim();
+
+    // Build a map: productName -> [{assignmentIndex, roomName, remaining}]
+    // so we can process all assignments in a single pass through the sheet
+    const assignMap = {};
+    assignments.forEach((a, idx) => {
+      const prod = normTxt(a.productName);
+      const room = canonicalRoomName_(a.roomName);
+      const qty  = Number(a.qty) || 0;
+      if (!prod || !room || qty <= 0) return;
+      if (!assignMap[prod]) assignMap[prod] = [];
+      assignMap[prod].push({ room, remaining: qty });
+    });
+
+    const results = {};
+    Object.keys(assignMap).forEach(p => { results[p] = { assigned: 0 }; });
+
+    for (let i = 1; i < data.length; i++) {
+      const row = data[i];
+      if (!allowedOrders.set[normTxt(row[0])]) continue;
+      if (normTxt(row[4]) !== "") continue; // already assigned
+      const st = String(row[5] || "").trim() || "Pending";
+      if (st !== "Pending") continue;
+
+      const prod = normTxt(row[3]);
+      const queue = assignMap[prod];
+      if (!queue) continue;
+
+      // Find the first assignment for this product that still has remaining qty
+      const slot = queue.find(s => s.remaining > 0);
+      if (!slot) continue;
+
+      sheet.getRange(i + 1, 5).setNumberFormat('@').setValue(slot.room);
+      sheet.getRange(i + 1, 6, 1, 3).setValues([["Pending", user, ts]]);
+      data[i][4] = slot.room; // mark as assigned in local copy
+
+      slot.remaining--;
+      results[prod].assigned++;
+
+      // If this slot is exhausted, move to next slot for this product
+      if (slot.remaining <= 0) queue.shift();
+    }
+
+    return { success: true, results };
+  } finally {
+    lock.releaseLock();
+  }
+}
 
 function getDeliveryHistorySheet_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -2085,7 +2367,7 @@ function logDeliveryFittingHistory_(orderId, productName, newStatus, qty, roomNa
 }
 
 // 8. DELIVERY: UPDATE STATUS (DIAGNOSTIC VERSION)
-function updateDeliveryStatus(orderIdsOrId, roomName, productName, oldStatus, newStatus, qtyToUpdate) {
+function updateDeliveryStatus(orderIdsOrId, roomName, productName, oldStatus, newStatus, qtyToUpdate, callerUser) {
   roomName = canonicalRoomName_(roomName);
   const allowedOrders = _getAllowedOrderIdSet_(orderIdsOrId);
 
@@ -2136,7 +2418,7 @@ if (allowedOrders.set[normTxt(row[0])] && normTxt(row[3]) === normTxt(productNam
 
   // APPLY: update only qtyToUpdate rows matching oldStatus in that room/product
   const data = sheet.getDataRange().getValues();
-  const user = Session.getActiveUser().getEmail() || "Workshop App";
+  const user = (callerUser && String(callerUser).trim()) ? String(callerUser).trim() : (Session.getActiveUser().getEmail() || "Workshop App");
   const ts = new Date();
 
   let updated = 0;
@@ -2351,13 +2633,14 @@ function getInventoryData() {
     for (let i = 1; i < data.length; i++) {
       result.components.push({
         rowIndex: i + 1,
-        sku: data[i][0],
+        itemCode: data[i][0],
         name: data[i][1],
         category: data[i][2],
         supplier: data[i][3],
-        stock: Number(data[i][4]) || 0,
-        min: Number(data[i][5]) || 0,
-        image: data[i][6]
+        stock: Number(data[i][4]) || 0,    // Col E = Current Stock
+        onOrder: Number(data[i][5]) || 0,  // Col F = On Order
+        price: Number(data[i][6]) || 0,    // Col G = Price
+        link: String(data[i][7] || '').trim() // Col H = Link
       });
     }
   }
@@ -2366,20 +2649,17 @@ function getInventoryData() {
   if (woodSheet && woodSheet.getLastRow() > 1) {
     const data = woodSheet.getDataRange().getValues();
     for (let i = 1; i < data.length; i++) {
-      const type = String(data[i][1] || "").trim();
-      if (type.toLowerCase() === "offcut") continue;
-
-      // DEBUG: Ensure we are reading the right column
-      // row[0] = Material, row[1] = Type, row[2] = Len, row[3] = Wid, row[4] = Qty
+      // row[0] = Material, row[1] = Colour Code, row[2] = Length, row[3] = Width, row[4] = Qty on Order, row[5] = Qty, row[6] = Price
       result.wood.push({
         rowIndex: i + 1,
-        material: String(data[i][0]), // Col A
-        type: type,                   // Col B
-        length: data[i][2],           // Col C
-        width: data[i][3],            // Col D
-        size: `${data[i][2]} x ${data[i][3]}`, 
-        onOrder: Number(data[i][4]) || 0, // Col E = Qty on Order
-        qty: Number(data[i][5]) || 0      // Col F = Qty in Stock
+        material: String(data[i][0]),                  // Col A
+        colourCode: String(data[i][1] || "").trim(),   // Col B
+        length: data[i][2],                            // Col C
+        width: data[i][3],                             // Col D
+        size: `${data[i][2]} x ${data[i][3]}`,
+        onOrder: Number(data[i][4]) || 0,              // Col E = Qty on Order
+        qty: Number(data[i][5]) || 0,                  // Col F = Qty in Stock
+        price: Number(data[i][6]) || 0                 // Col G = Price per sheet
       });
     }
   }
@@ -2397,15 +2677,91 @@ function getInventoryData() {
         thickness: String(data[i][map.thickness - 1] || "").trim(),
         rollLength: Number(data[i][map.rollLength - 1]) || 0,
         onOrder: Number(data[i][map.onOrder - 1]) || 0,
-        rolls: Number(data[i][map.rolls - 1]) || 0
+        rolls: Number(data[i][map.rolls - 1]) || 0,
+        price: map.price ? (Number(data[i][map.price - 1]) || 0) : 0
       });
     }
   }
   return result;
 }
 
+function getEdgeInventoryOnly() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const edgeSheet = ss.getSheetByName("Edge Band Stock");
+  const result = [];
+  if (!edgeSheet || edgeSheet.getLastRow() < 2) return result;
+  const data = edgeSheet.getDataRange().getValues();
+  const map = getEdgeBandColumnMap_(edgeSheet);
+  for (let i = 1; i < data.length; i++) {
+    result.push({
+      rowIndex: i + 1,
+      material:   String(data[i][map.material   - 1] || "").trim(),
+      thickness:  String(data[i][map.thickness  - 1] || "").trim(),
+      rollLength: Number(data[i][map.rollLength - 1]) || 0,
+      onOrder:    Number(data[i][map.onOrder    - 1]) || 0,
+      rolls:      Number(data[i][map.rolls      - 1]) || 0,
+      price:      map.price ? (Number(data[i][map.price - 1]) || 0) : 0
+    });
+  }
+  return result;
+}
+
+// ADD NEW STOCK ITEMS
+function addWoodItem(data) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName("Wood Stock");
+  if (!sheet) throw new Error("Wood Stock tab missing");
+  sheet.appendRow([
+    String(data.material    || '').trim(),  // Col A
+    String(data.colourCode  || '').trim(),  // Col B
+    Number(data.length)     || 0,           // Col C
+    Number(data.width)      || 0,           // Col D
+    Number(data.onOrder)    || 0,           // Col E = Qty on Order
+    Number(data.qty)        || 0,           // Col F = Qty in Stock
+    Number(data.price)      || 0            // Col G = Price
+  ]);
+  return sheet.getLastRow();
+}
+
+function addComponentItem(data) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName("Component Stock");
+  if (!sheet) throw new Error("Component Stock tab missing");
+  sheet.appendRow([
+    String(data.itemCode || '').trim(),  // Col A
+    String(data.name     || '').trim(),  // Col B
+    String(data.category || '').trim(),  // Col C
+    String(data.supplier || '').trim(),  // Col D
+    Number(data.stock)   || 0,           // Col E = Current Stock
+    Number(data.onOrder) || 0,           // Col F = On Order
+    Number(data.price)   || 0,           // Col G = Price
+    String(data.link     || '').trim()   // Col H = Link
+  ]);
+  return sheet.getLastRow();
+}
+
+function addEdgeBandItem(data) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName("Edge Band Stock");
+  if (!sheet) throw new Error("Edge Band Stock tab missing");
+  const colMap = getEdgeBandColumnMap_(sheet);
+  const lastCol = Math.max(
+    colMap.material, colMap.thickness, colMap.rollLength,
+    colMap.onOrder, colMap.rolls, colMap.price || 1
+  );
+  const newRow = new Array(lastCol).fill('');
+  newRow[colMap.material   - 1] = String(data.material  || '').trim();
+  newRow[colMap.thickness  - 1] = Number(data.thickness)  || 0;
+  newRow[colMap.rollLength - 1] = Number(data.rollLength) || 0;
+  newRow[colMap.onOrder    - 1] = Number(data.onOrder)    || 0;
+  newRow[colMap.rolls      - 1] = Number(data.rolls)      || 0;
+  if (colMap.price) newRow[colMap.price - 1] = Number(data.price) || 0;
+  sheet.appendRow(newRow);
+  return sheet.getLastRow();
+}
+
 // ADJUST WOOD STOCK (With Logging)
-function adjustWoodStock(rowIndex, change, reason) {
+function adjustWoodStock(rowIndex, change, reason, callerUser) {
     const lock = LockService.getScriptLock();
   lock.waitLock(30000);
   try {
@@ -2423,7 +2779,7 @@ function adjustWoodStock(rowIndex, change, reason) {
 
   // 2. Log History
   const materialName = sheet.getRange(rowIndex, 1).getValue(); // Col A
-  logStockTransaction(materialName, change, reason);
+  logStockTransaction(materialName, change, reason, null, callerUser);
 
   return newVal;
 
@@ -2433,7 +2789,7 @@ function adjustWoodStock(rowIndex, change, reason) {
 
 }
 
-function adjustEdgeStock(rowIndex, change, reason) {
+function adjustEdgeStock(rowIndex, change, reason, callerUser) {
 
     const lock = LockService.getScriptLock();
   lock.waitLock(30000);
@@ -2454,7 +2810,7 @@ function adjustEdgeStock(rowIndex, change, reason) {
   const mat = sheet.getRange(rowIndex, colMap.material).getValue();
   const thk = sheet.getRange(rowIndex, colMap.thickness).getValue();
   const rollLength = sheet.getRange(rowIndex, colMap.rollLength).getValue();
-  logStockTransaction(`Edge: ${mat} | ${thk}mm | ${rollLength}m`, change, reason);
+  logStockTransaction(`Edge: ${mat} | ${thk}mm | ${rollLength}m`, change, reason, null, callerUser);
 
   return newVal;
 
@@ -2464,7 +2820,7 @@ function adjustEdgeStock(rowIndex, change, reason) {
 
 }
 
-function adjustComponentStock(rowIndex, change, reason) {
+function adjustComponentStock(rowIndex, change, reason, callerUser) {
 
     const lock = LockService.getScriptLock();
   lock.waitLock(30000);
@@ -2484,7 +2840,7 @@ function adjustComponentStock(rowIndex, change, reason) {
   const sku = sheet.getRange(rowIndex, 1).getValue();  // Col A
   const name = sheet.getRange(rowIndex, 2).getValue(); // Col B
   const materialLabel = String(name || "").trim();
-  logStockTransaction(materialLabel || `Component: ${sku} | ${name}`, change, reason);
+  logStockTransaction(materialLabel || `Component: ${sku} | ${name}`, change, reason, null, callerUser);
 
   return newVal;
 
@@ -2496,7 +2852,58 @@ function adjustComponentStock(rowIndex, change, reason) {
 
 
 
-function allocateExternalOffcut_(itemKey, qtyUsed, projectId, productName) {
+function adjustComponentOnOrder(rowIndex, change) {
+    const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName("Component Stock");
+  if (!sheet) throw new Error("Component Stock tab missing");
+
+  const currentVal = sheet.getRange(rowIndex, 6).getValue(); // Col F = On Order
+  const newVal = (Number(currentVal) || 0) + Number(change);
+
+  if (newVal < 0) throw new Error("On Order cannot be negative");
+
+  sheet.getRange(rowIndex, 6).setValue(newVal);
+  return newVal;
+
+    } finally {
+    lock.releaseLock();
+  }
+}
+
+function receiveComponentFromOrder(rowIndex, qtyReceived, callerUser) {
+    const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName("Component Stock");
+  if (!sheet) throw new Error("Component Stock tab missing");
+
+  const onOrder = Number(sheet.getRange(rowIndex, 6).getValue()) || 0; // Col F = On Order
+  const inStock = Number(sheet.getRange(rowIndex, 5).getValue()) || 0; // Col E = Current Stock
+
+  const qty = Number(qtyReceived) || 0;
+  if (qty <= 0) throw new Error("Receive qty must be > 0");
+  if (qty > onOrder) throw new Error("Cannot receive more than On Order");
+
+  sheet.getRange(rowIndex, 6).setValue(onOrder - qty);
+  sheet.getRange(rowIndex, 5).setValue(inStock + qty);
+
+  const name = sheet.getRange(rowIndex, 2).getValue(); // Col B = Name
+  logStockTransaction(name, qty, "Restock / Delivery (from Order)", null, callerUser);
+
+  return "Success";
+
+    } finally {
+    lock.releaseLock();
+  }
+}
+
+function allocateExternalOffcut_(itemKey, qtyUsed, projectId, productName, callerUser) {
   const offcutId = String(itemKey || '').replace(/^offcut:/i, '').trim();
   if (!offcutId) throw new Error("Invalid offcut id.");
 
@@ -2541,13 +2948,13 @@ function allocateExternalOffcut_(itemKey, qtyUsed, projectId, productName) {
 
   const historyMaterialName = `Offcut ${offcutId}: ${materialName} - ${lengthMm} x ${widthMm}`;
   const historyReason = `CNC Job: #${projectId} (${productName})`;
-  logStockTransaction(historyMaterialName, -qtyUsed, historyReason);
+  logStockTransaction(historyMaterialName, -qtyUsed, historyReason, null, callerUser);
   updateProjectUsageSummary(projectId, productName, materialName, qtyUsed);
 
   return "Success";
 }
 
-function allocateWoodSheet_(rowIndex, qtyUsed, projectId, productName) {
+function allocateWoodSheet_(rowIndex, qtyUsed, projectId, productName, callerUser) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const stockSheet = ss.getSheetByName("Wood Stock");
   if (!stockSheet) throw new Error("Wood Stock tab missing");
@@ -2559,14 +2966,14 @@ function allocateWoodSheet_(rowIndex, qtyUsed, projectId, productName) {
 
   const materialName = stockSheet.getRange(rowIndex, 1).getValue();
   const historyReason = `CNC Job: #${projectId} (${productName})`;
-  logStockTransaction(materialName, -qtyUsed, historyReason);
+  logStockTransaction(materialName, -qtyUsed, historyReason, null, callerUser);
   updateProjectUsageSummary(projectId, productName, materialName, qtyUsed);
 
   return "Success";
 }
 
 // 3. ALLOCATE WOOD / OFFCUTS
-function allocateWood(itemKey, qtyUsed, projectId, productName) {
+function allocateWood(itemKey, qtyUsed, projectId, productName, callerUser) {
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);
   try {
@@ -2577,12 +2984,12 @@ function allocateWood(itemKey, qtyUsed, projectId, productName) {
     if (!key) throw new Error("Missing stock item key.");
 
     if (/^offcut:/i.test(key)) {
-      return allocateExternalOffcut_(key, qty, projectId, productName);
+      return allocateExternalOffcut_(key, qty, projectId, productName, callerUser);
     }
 
     const rowIndex = Number(key);
     if (!rowIndex) throw new Error("Invalid wood stock row.");
-    return allocateWoodSheet_(rowIndex, qty, projectId, productName);
+    return allocateWoodSheet_(rowIndex, qty, projectId, productName, callerUser);
   } finally {
     lock.releaseLock();
   }
@@ -2636,7 +3043,7 @@ function adjustEdgeOnOrder(rowIndex, change) {
 
 }
 
-function receiveWoodFromOrder(rowIndex, qtyReceived) {
+function receiveWoodFromOrder(rowIndex, qtyReceived, callerUser) {
 
     const lock = LockService.getScriptLock();
   lock.waitLock(30000);
@@ -2657,7 +3064,7 @@ function receiveWoodFromOrder(rowIndex, qtyReceived) {
   sheet.getRange(rowIndex, 6).setValue(inStock + qty);
 
   const materialName = sheet.getRange(rowIndex, 1).getValue(); // Col A
-  logStockTransaction(materialName, qty, "Restock / Delivery (from Order)");
+  logStockTransaction(materialName, qty, "Restock / Delivery (from Order)", null, callerUser);
 
   return "Success";
 
@@ -2667,7 +3074,7 @@ function receiveWoodFromOrder(rowIndex, qtyReceived) {
 
 }
 
-function receiveEdgeFromOrder(rowIndex, rollsReceived) {
+function receiveEdgeFromOrder(rowIndex, rollsReceived, callerUser) {
 
     const lock = LockService.getScriptLock();
   lock.waitLock(30000);
@@ -2691,7 +3098,7 @@ function receiveEdgeFromOrder(rowIndex, rollsReceived) {
   const mat = sheet.getRange(rowIndex, colMap.material).getValue();
   const thk = sheet.getRange(rowIndex, colMap.thickness).getValue();
   const rollLength = sheet.getRange(rowIndex, colMap.rollLength).getValue();
-  logStockTransaction(`Edge: ${mat} | ${thk}mm | ${rollLength}m`, qty, "Restock / Delivery (from Order)");
+  logStockTransaction(`Edge: ${mat} | ${thk}mm | ${rollLength}m`, qty, "Restock / Delivery (from Order)", null, callerUser);
 
   return "Success";
 
@@ -2702,8 +3109,799 @@ function receiveEdgeFromOrder(rowIndex, rollsReceived) {
 }
 
 
+// ACTION LIST
+function getProductCatalogue() {
+  const prodSS = SpreadsheetApp.openById(PRODUCT_RECIPE_SHEET_ID);
+
+  const panelSheet = prodSS.getSheetByName(PRODUCT_RECIPE_TAB_NAME);
+  if (!panelSheet) return [];
+  const panelData = panelSheet.getDataRange().getValues();
+
+  const compSheet = prodSS.getSheetByName("Components");
+  const compData = compSheet ? compSheet.getDataRange().getValues() : [];
+
+  const catalogue = {};
+
+  for (let i = 1; i < panelData.length; i++) {
+    const row = panelData[i];
+    const sku = String(row[0] || "").trim().toUpperCase();
+    if (!sku) continue;
+    if (!catalogue[sku]) catalogue[sku] = { sku, productName: String(row[1] || "").trim() || sku, panels: [], components: [] };
+    const panelName   = String(row[2] || "").trim();
+    const material    = String(row[3] || "").trim();
+    const familyCode  = String(row[4] || "").trim();
+    const qty         = Number(row[7]) || 0;
+    if (panelName) catalogue[sku].panels.push({ name: panelName, material, qty, familyCode });
+  }
+
+  for (let i = 1; i < compData.length; i++) {
+    const row = compData[i];
+    const sku = String(row[0] || "").trim().toUpperCase();
+    if (!sku) continue;
+    if (!catalogue[sku]) catalogue[sku] = { sku, productName: String(row[1] || "").trim() || sku, panels: [], components: [] };
+    const name     = String(row[2] || "").trim();
+    const itemCode = String(row[3] || "").trim();
+    const qty      = Number(row[4]) || 0;
+    const supplier = String(row[5] || "").trim();
+    const link     = String(row[6] || "").trim();
+    if (name) catalogue[sku].components.push({ name, itemCode, qty, supplier, link });
+  }
+
+  return Object.values(catalogue).sort((a, b) => a.sku.localeCompare(b.sku));
+}
+
+// ── Delivery Schedule ────────────────────────────────────────────────────────
+
+function _getDeliveryScheduleSheet_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName("Delivery Schedule");
+  if (!sheet) {
+    sheet = ss.insertSheet("Delivery Schedule");
+    sheet.appendRow(["Delivery No","Date","Order ID","Customer","Rooms","Notes","Created By","Created At"]);
+  }
+  return sheet;
+}
+
+function _nextDeliveryNumber_() {
+  const sheet = _getDeliveryScheduleSheet_();
+  const data = sheet.getDataRange().getValues();
+  let max = 0;
+  for (let i = 1; i < data.length; i++) {
+    const m = String(data[i][0] || "").match(/D-(\d+)/);
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  return "D-" + String(max + 1).padStart(3, "0");
+}
+
+function saveDeliverySchedule(orderId, customer, dateStr, rooms, notes, callerUser) {
+  const sheet = _getDeliveryScheduleSheet_();
+  const delivNo = _nextDeliveryNumber_();
+  const user = (callerUser && String(callerUser).trim()) ? String(callerUser).trim() : (Session.getActiveUser().getEmail() || "Workshop App");
+  sheet.appendRow([delivNo, dateStr, orderId, customer, rooms.join(","), notes || "", user, new Date()]);
+  return delivNo;
+}
+
+function getDeliverySchedules(orderId) {
+  const sheet = _getDeliveryScheduleSheet_();
+  const data = sheet.getDataRange().getValues();
+  const results = [];
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    if (String(row[2] || "").trim() !== String(orderId || "").trim()) continue;
+    results.push({
+      delivNo:   String(row[0] || ""),
+      date:      row[1] instanceof Date ? Utilities.formatDate(row[1], Session.getScriptTimeZone(), "dd/MM/yyyy") : String(row[1] || ""),
+      orderId:   String(row[2] || ""),
+      customer:  String(row[3] || ""),
+      rooms:     String(row[4] || "").split(",").map(r => r.trim()).filter(Boolean),
+      notes:     String(row[5] || ""),
+      createdBy: String(row[6] || ""),
+      rowIndex:  i + 1
+    });
+  }
+  return results.reverse();
+}
+
+function getOrderAddress(orderId) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName("Delivery Hub");
+  if (!sheet) return "";
+  const data = sheet.getDataRange().getValues();
+  const norm = v => String(v ?? "").replace(/ /g, " ").trim();
+  for (let i = 1; i < data.length; i++) {
+    if (norm(data[i][0]) === norm(orderId) && norm(data[i][2])) return norm(data[i][2]);
+  }
+  return "";
+}
+
+function deleteDeliverySchedule(rowIndex) {
+  const sheet = _getDeliveryScheduleSheet_();
+  sheet.deleteRow(rowIndex);
+  return true;
+}
+
+// ── Room Notes ────────────────────────────────────────────────────────────────
+
+function saveRoomNote(orderId, roomName, note, callerUser) {
+  const ss   = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet  = ss.getSheetByName("Room Notes");
+  if (!sheet) {
+    sheet = ss.insertSheet("Room Notes");
+    sheet.appendRow(["Order ID", "Room Name", "Note", "Updated By", "Updated At"]);
+  }
+  const user    = callerUser && String(callerUser).trim() ? String(callerUser).trim() : "Workshop App";
+  const normTxt = v => String(v ?? "").replace(/ /g, " ").trim();
+  const ordId   = normTxt(orderId);
+  const room    = normTxt(roomName);
+  const data    = sheet.getDataRange().getValues();
+  for (let i = 1; i < data.length; i++) {
+    if (normTxt(data[i][0]) === ordId && normTxt(data[i][1]) === room) {
+      sheet.getRange(i + 1, 3).setValue(note || "");
+      sheet.getRange(i + 1, 4).setValue(user);
+      sheet.getRange(i + 1, 5).setValue(new Date());
+      return true;
+    }
+  }
+  sheet.appendRow([ordId, room, note || "", user, new Date()]);
+  return true;
+}
+
+function getRoomNotes(orderId) {
+  const ss    = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName("Room Notes");
+  if (!sheet) return {};
+  const normTxt = v => String(v ?? "").replace(/ /g, " ").trim();
+  const ordId   = normTxt(orderId);
+  const data    = sheet.getDataRange().getValues();
+  const result  = {};
+  for (let i = 1; i < data.length; i++) {
+    if (normTxt(data[i][0]) === ordId) {
+      result[normTxt(data[i][1])] = String(data[i][2] || "");
+    }
+  }
+  return result;
+}
+
+function batchMarkDelivered(orderId, items, callerUser) {
+  // items = [{roomName, prodName, qty, sourceOrderIds: [...]}]
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    const normTxt = v => String(v ?? "").replace(/ /g, " ").trim();
+    const normSt  = s => { s = String(s || "").trim(); return s === "" ? "Pending" : s; };
+    const user = callerUser && String(callerUser).trim() ? String(callerUser).trim() : "Workshop App";
+    const ts   = new Date();
+
+    const ss         = SpreadsheetApp.getActiveSpreadsheet();
+    const delivSheet = ss.getSheetByName("Delivery Hub");
+    if (!delivSheet) return { error: "Delivery Hub sheet missing" };
+
+    const data    = delivSheet.getDataRange().getValues();
+    const results = [];
+
+    for (const item of items) {
+      const allowedOrders = _getAllowedOrderIdSet_(item.sourceOrderIds);
+      const prodNorm  = normTxt(item.prodName);
+      const roomNorm  = canonicalRoomName_(item.roomName);
+      const qtyToMark = Math.max(1, Number(item.qty) || 1);
+
+      // Safety: count already on site across all allowed orders for this product
+      const maxAllowed = getMaxReadyFromFactory(allowedOrders.ids, item.prodName);
+      let onSite = 0;
+      for (let i = 1; i < data.length; i++) {
+        if (!allowedOrders.set[normTxt(data[i][0])]) continue;
+        if (normTxt(data[i][3]) !== prodNorm) continue;
+        const st = normSt(data[i][5]);
+        if (st === "Delivered" || st === "Fitted") onSite++;
+      }
+      if (onSite + qtyToMark > maxAllowed) {
+        results.push({ prodName: item.prodName, roomName: item.roomName, result: "BLOCKED", maxAllowed, onSite });
+        continue;
+      }
+
+      // Apply: find Pending rows in this room for this product and mark Delivered
+      let updated = 0;
+      for (let i = 1; i < data.length && updated < qtyToMark; i++) {
+        if (!allowedOrders.set[normTxt(data[i][0])]) continue;
+        if (roomKey_(data[i][4]) !== roomKey_(roomNorm)) continue;
+        if (normTxt(data[i][3]) !== prodNorm) continue;
+        if (normSt(data[i][5]) !== "Pending") continue;
+        delivSheet.getRange(i + 1, 6).setValue("Delivered");
+        delivSheet.getRange(i + 1, 7).setValue(user);
+        delivSheet.getRange(i + 1, 8).setValue(ts);
+        data[i][5] = "Delivered"; // keep in-memory copy in sync for subsequent safety checks
+        updated++;
+      }
+
+      if (updated > 0) {
+        logDeliveryFittingHistory_(allowedOrders.ids.join(" & "), item.prodName, "Delivered", updated, item.roomName, user, ts);
+        results.push({ prodName: item.prodName, roomName: item.roomName, result: "SUCCESS", updated });
+      } else {
+        results.push({ prodName: item.prodName, roomName: item.roomName, result: "NOT_FOUND", updated: 0 });
+      }
+    }
+
+    return { results };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// ── End Delivery Schedule ─────────────────────────────────────────────────────
+
+// ── Material Weights ──────────────────────────────────────────────────────────
+
+function _createMaterialWeightsSheet_(prodSS) {
+  const sheet = prodSS.insertSheet('Material Weights');
+  sheet.getRange(1, 1, 1, 4).setValues([['Material', 'Sheet Width (mm)', 'Sheet Length (mm)', 'Full Sheet Weight (kg)']]);
+  sheet.getRange(2, 1, 2, 4).setValues([
+    ['MDF', 2800, 2070, 80],
+    ['Ply', 3050, 1220, 50]
+  ]);
+  sheet.getRange(1, 1, 1, 4).setFontWeight('bold').setBackground('#f3f4f6');
+  sheet.autoResizeColumns(1, 4);
+}
+
+function getMaterialWeights_(prodSS) {
+  const sheet = prodSS.getSheetByName('Material Weights');
+  if (!sheet || sheet.getLastRow() < 2) return { mdf: 13.803, ply: 13.441 };
+  const data = sheet.getDataRange().getValues();
+  const map = {};
+  for (let i = 1; i < data.length; i++) {
+    const matKey = String(data[i][0] || '').trim().toLowerCase();
+    const w  = Number(data[i][1]) || 0;
+    const l  = Number(data[i][2]) || 0;
+    const kg = Number(data[i][3]) || 0;
+    if (!matKey || !w || !l || !kg) continue;
+    map[matKey] = parseFloat((kg / ((w * l) / 1000000)).toFixed(4));
+  }
+  return map;
+}
+
+function getProductWeightsBySku(skus) {
+  if (!skus || !skus.length) return {};
+  const skuSet = new Set(skus.map(s => String(s).trim().toUpperCase()).filter(Boolean));
+  if (!skuSet.size) return {};
+
+  const prodSS = SpreadsheetApp.openById(PRODUCT_RECIPE_SHEET_ID);
+
+  if (!prodSS.getSheetByName('Material Weights')) _createMaterialWeightsSheet_(prodSS);
+
+  const recipeSheet = prodSS.getSheetByName(PRODUCT_RECIPE_TAB_NAME);
+  if (!recipeSheet || recipeSheet.getLastRow() < 2) return {};
+
+  const weightMap = getMaterialWeights_(prodSS);
+  const data = recipeSheet.getDataRange().getValues();
+  const skuWeights = {};
+
+  for (let i = 1; i < data.length; i++) {
+    const sku = String(data[i][0] || '').trim().toUpperCase();
+    if (!sku || !skuSet.has(sku)) continue;
+
+    const material    = String(data[i][3] || '').trim().toLowerCase();
+    const areaPerUnit = Number(data[i][8]) || 0; // Col I = area per unit (m²)
+    if (!areaPerUnit) continue;
+
+    let kgPerM2 = 0;
+    for (const [key, val] of Object.entries(weightMap)) {
+      if (material.includes(key)) { kgPerM2 = val; break; }
+    }
+    if (!kgPerM2) continue;
+
+    skuWeights[sku] = (skuWeights[sku] || 0) + areaPerUnit * kgPerM2;
+  }
+
+  Object.keys(skuWeights).forEach(k => { skuWeights[k] = parseFloat(skuWeights[k].toFixed(1)); });
+  return skuWeights;
+}
+
+// ── End Material Weights ──────────────────────────────────────────────────────
+
+// ── Surplus Stock ─────────────────────────────────────────────────────────────
+
+function _ensureSurplusSheet_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName('Surplus Stock');
+  if (!sheet) {
+    sheet = ss.insertSheet('Surplus Stock');
+    sheet.getRange(1, 1, 1, 10).setValues([[
+      'ID', 'Panel Name', 'Family Code', 'Source SKU', 'Source Order ID',
+      'Qty Declared', 'Qty Available', 'Declared By', 'Date Declared', 'Notes'
+    ]]);
+    sheet.getRange(1, 1, 1, 10).setFontWeight('bold').setBackground('#f3f4f6');
+    sheet.setFrozenRows(1);
+    sheet.autoResizeColumns(1, 10);
+  }
+  return sheet;
+}
+
+function getSurplusStock() {
+  const sheet = _ensureSurplusSheet_();
+  if (sheet.getLastRow() < 2) return [];
+  const data = sheet.getDataRange().getValues();
+  const tz = Session.getScriptTimeZone();
+  const result = [];
+  for (let i = 1; i < data.length; i++) {
+    const qtyAvail = Number(data[i][6]) || 0;
+    result.push({
+      rowIndex:    i + 1,
+      id:          Number(data[i][0]) || (i + 1),
+      panelName:   String(data[i][1] || '').trim(),
+      familyCode:  String(data[i][2] || '').trim(),
+      sourceSku:   String(data[i][3] || '').trim(),
+      sourceOrder: String(data[i][4] || '').trim(),
+      qtyDeclared: Number(data[i][5]) || 0,
+      qtyAvailable: qtyAvail,
+      declaredBy:  String(data[i][7] || '').trim(),
+      date:        data[i][8] instanceof Date ? Utilities.formatDate(data[i][8], tz, 'dd/MM/yyyy') : String(data[i][8] || ''),
+      notes:       String(data[i][9] || '').trim()
+    });
+  }
+  return result.filter(r => r.qtyAvailable > 0);
+}
+
+function addSurplusEntry(panelName, familyCode, sourceSku, sourceOrderId, qty, callerUser, notes) {
+  if (!qty || qty <= 0) throw new Error('Quantity must be greater than zero');
+  const sheet = _ensureSurplusSheet_();
+  const lastRow = sheet.getLastRow();
+  let nextId = 1;
+  if (lastRow > 1) {
+    const ids = sheet.getRange(2, 1, lastRow - 1, 1).getValues().flat();
+    nextId = Math.max(...ids.map(v => Number(v) || 0)) + 1;
+  }
+  const user = String(callerUser || '').trim() || 'Workshop App';
+  sheet.appendRow([
+    nextId,
+    String(panelName  || '').trim(),
+    String(familyCode || '').trim().toUpperCase(),
+    String(sourceSku  || '').trim().toUpperCase(),
+    String(sourceOrderId || '').trim(),
+    qty, qty,
+    user, new Date(),
+    String(notes || '').trim()
+  ]);
+  return nextId;
+}
+
+function allocateSurplusToOrder(surplusRowIndex, qtyToAllocate, targetOrderId) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    const norm = v => String(v ?? '').replace(/\s+/g, ' ').trim();
+
+    // 1. Decrement surplus stock
+    const surplusSheet = _ensureSurplusSheet_();
+    const current = Number(surplusSheet.getRange(surplusRowIndex, 7).getValue()) || 0;
+    if (qtyToAllocate > current) throw new Error(`Only ${current} available in surplus`);
+    surplusSheet.getRange(surplusRowIndex, 7).setValue(current - qtyToAllocate);
+
+    // 2. Mark matching panels as packed in the target order's Manufacture Hub rows
+    if (!targetOrderId) return true;
+    const surplusRow  = surplusSheet.getRange(surplusRowIndex, 1, 1, 10).getValues()[0];
+    const familyCode  = norm(surplusRow[2]).toUpperCase();
+    const surplusSku  = norm(surplusRow[3]).toUpperCase();
+    const surplusPanelName = norm(surplusRow[1]).toLowerCase();
+
+    const ss       = SpreadsheetApp.getActiveSpreadsheet();
+    const hubSheet = ss.getSheetByName('Manufacture Hub');
+    if (!hubSheet) return true;
+
+    const hubData = hubSheet.getDataRange().getValues();
+    const matchingPanelNames = new Set();
+
+    if (familyCode) {
+      // Primary: match by family code via recipe
+      const prodSS      = SpreadsheetApp.openById(PRODUCT_RECIPE_SHEET_ID);
+      const recipeSheet = prodSS.getSheetByName(PRODUCT_RECIPE_TAB_NAME);
+      if (recipeSheet) {
+        const orderSkus = new Set();
+        hubData.forEach(row => { if (norm(row[0]) === norm(targetOrderId)) orderSkus.add(norm(row[3]).toUpperCase()); });
+        const recipeData = recipeSheet.getDataRange().getValues();
+        for (let i = 1; i < recipeData.length; i++) {
+          if (!orderSkus.has(norm(recipeData[i][0]).toUpperCase())) continue;
+          if (norm(recipeData[i][4]).toUpperCase() !== familyCode) continue;
+          matchingPanelNames.add(norm(recipeData[i][2]).toLowerCase());
+        }
+      }
+    } else {
+      // Fallback: no family code — match by same panel name within same SKU
+      for (let i = 1; i < hubData.length; i++) {
+        if (norm(hubData[i][0]) !== norm(targetOrderId)) continue;
+        if (norm(hubData[i][3]).toUpperCase() !== surplusSku) continue;
+        if (norm(hubData[i][4]).toLowerCase() === surplusPanelName) {
+          matchingPanelNames.add(surplusPanelName);
+          break;
+        }
+      }
+    }
+    if (!matchingPanelNames.size) return true;
+
+    // Update qtyCut/qtyProcessed/qtyEdgeFinish/qtyPacked for matching hub rows
+    for (let i = 1; i < hubData.length; i++) {
+      if (norm(hubData[i][0]) !== norm(targetOrderId)) continue;
+      if (!matchingPanelNames.has(norm(hubData[i][4]).toLowerCase())) continue;
+      const qtyOrder = Number(hubData[i][11]) || 0;
+      const addQty   = Math.min(qtyToAllocate, qtyOrder);
+      // cols 13-16 = qtyCut, qtyProcessed, qtyEdgeFinish, qtyPacked (1-indexed)
+      [13, 14, 15, 16].forEach(col => {
+        const cur = Number(hubSheet.getRange(i + 1, col).getValue()) || 0;
+        hubSheet.getRange(i + 1, col).setValue(Math.min(qtyOrder, cur + addQty));
+      });
+    }
+    return true;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function getSurplusSummaryBySkus(skus) {
+  if (!skus || !skus.length) return {};
+  const surplus = getSurplusStock();
+  const result  = {};
+  skus.forEach(sku => {
+    const upper = String(sku).trim().toUpperCase();
+    const total = surplus
+      .filter(s => s.sourceSku.toUpperCase() === upper)
+      .reduce((sum, s) => sum + (s.qtyAvailable || 0), 0);
+    if (total > 0) result[upper] = total;
+  });
+  return result;
+}
+
+// Search surplus by SKU directly — used by import modal before order is in Manufacture Hub
+function getSurplusForSku(sku) {
+  if (!sku) return [];
+  const normSku = String(sku).trim().toUpperCase();
+  const surplus = getSurplusStock();
+  const matches = [];
+
+  // Primary: same source SKU + any panel name
+  surplus.forEach(s => {
+    if (s.sourceSku.toUpperCase() === normSku) {
+      matches.push({ ...s, orderPanelName: s.panelName, orderProductName: normSku });
+    }
+  });
+
+  // Secondary: family code match via recipe (for panels from a different SKU but same family)
+  if (surplus.some(s => s.sourceSku.toUpperCase() !== normSku)) {
+    try {
+      const prodSS   = SpreadsheetApp.openById(PRODUCT_RECIPE_SHEET_ID);
+      const recSheet = prodSS.getSheetByName(PRODUCT_RECIPE_TAB_NAME);
+      if (recSheet) {
+        const recData = recSheet.getDataRange().getValues();
+        const norm    = v => String(v ?? '').replace(/\s+/g, ' ').trim();
+        // Get family codes for this SKU
+        const skuFamilies = new Set();
+        for (let i = 1; i < recData.length; i++) {
+          if (norm(recData[i][0]).toUpperCase() !== normSku) continue;
+          const fc = norm(recData[i][4]).toUpperCase();
+          if (fc) skuFamilies.add(fc);
+        }
+        const alreadyMatched = new Set(matches.map(m => m.rowIndex));
+        surplus.forEach(s => {
+          if (alreadyMatched.has(s.rowIndex)) return;
+          const fc = s.familyCode.toUpperCase();
+          if (fc && skuFamilies.has(fc)) {
+            matches.push({ ...s, orderPanelName: s.panelName, orderProductName: normSku });
+          }
+        });
+      }
+    } catch(e) { /* recipe lookup optional */ }
+  }
+
+  return matches;
+}
+
+function getAvailableSurplusForOrder(orderId) {
+  // Get all panel family codes for this order's products from the recipe
+  const prodSS   = SpreadsheetApp.openById(PRODUCT_RECIPE_SHEET_ID);
+  const recSheet = prodSS.getSheetByName(PRODUCT_RECIPE_TAB_NAME);
+  if (!recSheet) return [];
+
+  const ss       = SpreadsheetApp.getActiveSpreadsheet();
+  const hubSheet = ss.getSheetByName('Manufacture Hub');
+  if (!hubSheet) return [];
+
+  const norm = v => String(v ?? '').replace(/\s+/g, ' ').trim();
+
+  // Get SKUs in this order
+  const hubData = hubSheet.getDataRange().getValues();
+  const orderSkus = new Set();
+  const skuProdMap = {}; // sku → productName
+  hubData.forEach(row => {
+    if (norm(row[0]) !== norm(orderId)) return;
+    const sku = norm(row[3]).toUpperCase();
+    if (sku) { orderSkus.add(sku); skuProdMap[sku] = norm(row[2]); }
+  });
+  if (!orderSkus.size) return [];
+
+  // Get family codes used in this order's panels
+  const recData = recSheet.getDataRange().getValues();
+  const orderFamilies = new Map(); // familyCode → { panelName, sku, productName }
+  // Also build panel name map for SKU-based fallback
+  const orderPanelsBySku = new Map(); // sku → [panelName, ...]
+  for (let i = 1; i < recData.length; i++) {
+    const sku    = norm(recData[i][0]).toUpperCase();
+    const pName  = norm(recData[i][2]);
+    const family = norm(recData[i][4]).toUpperCase();
+    if (!orderSkus.has(sku)) continue;
+    if (family) {
+      if (!orderFamilies.has(family)) {
+        orderFamilies.set(family, { panelName: pName, sku, productName: skuProdMap[sku] || sku });
+      }
+    }
+    // Always track panels by SKU for fallback
+    if (!orderPanelsBySku.has(sku)) orderPanelsBySku.set(sku, []);
+    orderPanelsBySku.get(sku).push(pName);
+  }
+
+  // Match surplus entries by family code (primary) OR by SKU when no family code (fallback)
+  const surplus = getSurplusStock();
+  const matches = [];
+  const seen = new Set(); // avoid duplicates
+
+  surplus.forEach(s => {
+    const fc  = s.familyCode.toUpperCase();
+    const key = `${s.rowIndex}`;
+    if (seen.has(key)) return;
+
+    if (fc && orderFamilies.has(fc)) {
+      // Primary: family code match
+      const orderPanel = orderFamilies.get(fc);
+      seen.add(key);
+      matches.push({ ...s, orderPanelName: orderPanel.panelName, orderProductName: orderPanel.productName });
+    } else if (!fc && orderSkus.has(s.sourceSku.toUpperCase())) {
+      // Fallback: no family code but same SKU — panels are identical products
+      const sku = s.sourceSku.toUpperCase();
+      const panelNames = orderPanelsBySku.get(sku) || [];
+      const orderPanelName = panelNames.find(n => n.toLowerCase() === s.panelName.toLowerCase()) || s.panelName;
+      seen.add(key);
+      matches.push({ ...s, orderPanelName, orderProductName: skuProdMap[sku] || sku });
+    }
+  });
+  return matches;
+}
+
+function declareSurplusFromManufacturing(orderId, panelName, familyCode, sourceSku, qty, alreadyProcessed, callerUser) {
+  // alreadyProcessed = true: panels exist physically → add to surplus AND reduce order panel qty
+  // alreadyProcessed = false: panels not yet cut → just reduce order required qty, nothing added to surplus
+  const norm = v => String(v ?? '').replace(/\s+/g, ' ').trim();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const hubSheet = ss.getSheetByName('Manufacture Hub');
+  if (!hubSheet) throw new Error('Manufacture Hub tab missing');
+
+  const data = hubSheet.getDataRange().getValues();
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    let found = false;
+    for (let i = 1; i < data.length; i++) {
+      if (norm(data[i][0]) !== norm(orderId)) continue;
+      if (norm(data[i][4]).toLowerCase() !== norm(panelName).toLowerCase()) continue;
+      const currentQtyOrder = Number(data[i][11]) || 0;
+      const newQtyOrder = Math.max(0, currentQtyOrder - qty);
+      hubSheet.getRange(i + 1, 12).setValue(newQtyOrder); // Col L = qtyOrder
+      if (!alreadyProcessed) {
+        // Also zero out any already-logged packed/cut if they exceed new qty
+        const cols = [13, 14, 15, 16]; // qtyCut, qtyProcessed, qtyEdge, qtyPacked
+        cols.forEach(col => {
+          const cur = Number(hubSheet.getRange(i + 1, col).getValue()) || 0;
+          if (cur > newQtyOrder) hubSheet.getRange(i + 1, col).setValue(newQtyOrder);
+        });
+      }
+      found = true;
+      break;
+    }
+    if (!found) throw new Error(`Panel "${panelName}" not found in order ${orderId}`);
+
+    if (alreadyProcessed) {
+      addSurplusEntry(panelName, familyCode, sourceSku, orderId, qty, callerUser,
+        `Declared surplus during manufacturing of order ${orderId}`);
+    }
+    return true;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function markPanelAsPackedFromSurplus(orderId, panelName, qty) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    const norm = v => String(v ?? '').replace(/\s+/g, ' ').trim();
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const hubSheet = ss.getSheetByName('Manufacture Hub');
+    if (!hubSheet) throw new Error('Manufacture Hub tab missing');
+
+    const data = hubSheet.getDataRange().getValues();
+    let updated = 0;
+    for (let i = 1; i < data.length; i++) {
+      if (norm(data[i][0]) !== norm(orderId)) continue;
+      if (norm(data[i][4]).toLowerCase() !== norm(panelName).toLowerCase()) continue;
+      const qtyOrder = Number(data[i][11]) || 0;
+      const setQty   = Math.min(qty, qtyOrder);
+      // Set cut, processed, edge, packed all to setQty
+      [13, 14, 15, 16].forEach(col => {
+        hubSheet.getRange(i + 1, col).setValue(setQty);
+      });
+      updated++;
+    }
+    if (!updated) throw new Error(`Panel "${panelName}" not found in order ${orderId}`);
+    return updated;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// ── End Surplus Stock ─────────────────────────────────────────────────────────
+
+// ── Discord Notifications ─────────────────────────────────────────────────────
+
+function postToDiscord_(embed) {
+  try {
+    const res = UrlFetchApp.fetch(DISCORD_WEBHOOK_URL + '?wait=false', {
+      method: 'post',
+      contentType: 'application/json',
+      headers: { 'User-Agent': 'WorkshopHubBot/1.0 (Google Apps Script)' },
+      payload: JSON.stringify({ embeds: [embed] }),
+      muteHttpExceptions: true
+    });
+    const code = res.getResponseCode();
+    if (code !== 200 && code !== 204) {
+      console.warn('Discord webhook returned ' + code + ': ' + res.getContentText());
+    }
+  } catch (e) {
+    console.warn('Discord notification failed:', e.message);
+  }
+}
+
+function notifyTaskCreated_(task, dueDate, assignedTo, assignedBy, priority, taskId) {
+  const priorityColours = { 'High': 15612550, 'Medium': 16097803, 'Low': 3818378 };
+  const colour = priorityColours[priority] || 3818378;
+
+  const fields = [
+    { name: '📝 Task',        value: task || '—',        inline: false },
+    { name: '👤 Assigned To', value: assignedTo || '—',  inline: true  },
+    { name: '📌 Assigned By', value: assignedBy || '—',  inline: true  },
+    { name: '⚡ Priority',    value: priority || '—',    inline: true  }
+  ];
+  if (dueDate) fields.push({ name: '📅 Due Date', value: dueDate, inline: true });
+
+  postToDiscord_({
+    title: '📋 New Task Created',
+    color: colour,
+    fields,
+    footer: { text: `Workshop Hub · Task #${taskId}` },
+    timestamp: new Date().toISOString()
+  });
+}
+
+function notifyTaskCompleted_(task, assignedTo, assignedBy, newStatus, taskId) {
+  const colour = newStatus === 'Complete' ? 3066993 : 9807270; // green : grey
+
+  postToDiscord_({
+    title: newStatus === 'Complete' ? '✅ Task Completed' : `🔄 Task Updated — ${newStatus}`,
+    color: colour,
+    fields: [
+      { name: '📝 Task',        value: task || '—',       inline: false },
+      { name: '👤 Assigned To', value: assignedTo || '—', inline: true  },
+      { name: '📌 Assigned By', value: assignedBy || '—', inline: true  },
+      { name: '📊 New Status',  value: newStatus || '—',  inline: true  }
+    ],
+    footer: { text: `Workshop Hub · Task #${taskId}` },
+    timestamp: new Date().toISOString()
+  });
+}
+
+// ── End Discord Notifications ─────────────────────────────────────────────────
+
+function getActionList() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName("Action List");
+  if (!sheet || sheet.getLastRow() < 2) return [];
+
+  const data = sheet.getDataRange().getValues();
+  const tz = Session.getScriptTimeZone();
+  const result = [];
+
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    const dateVal = row[3];
+    const dueVal  = row[6];
+    result.push({
+      rowIndex:   i + 1,
+      id:         Number(row[0]) || (i + 1),
+      assignedTo: String(row[1] || '').trim(),
+      assignedBy: String(row[2] || '').trim(),
+      date:       dateVal instanceof Date ? Utilities.formatDate(dateVal, tz, "dd/MM/yyyy") : String(dateVal || '').trim(),
+      task:       String(row[4] || '').trim(),
+      priority:   String(row[5] || '').trim(),
+      dueDate:    dueVal instanceof Date ? Utilities.formatDate(dueVal, tz, "dd/MM/yyyy") : String(dueVal || '').trim(),
+      status:     String(row[7] || 'Not Started').trim()
+    });
+  }
+
+  return result;
+}
+
+function addActionItem(data) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName("Action List");
+  if (!sheet) throw new Error("Action List tab missing");
+
+  const lastRow = sheet.getLastRow();
+  let nextId = 1;
+  if (lastRow > 1) {
+    const ids = sheet.getRange(2, 1, lastRow - 1, 1).getValues().flat();
+    const maxId = Math.max(...ids.map(v => Number(v) || 0));
+    nextId = maxId + 1;
+  }
+
+  let dueDate = '';
+  if (data.dueDate) {
+    const parsed = new Date(data.dueDate);
+    if (!isNaN(parsed.getTime())) dueDate = parsed;
+  }
+
+  const assignedTo = String(data.assignedTo || '').trim();
+  const assignedBy = String(data.assignedBy || '').trim();
+  const task       = String(data.task       || '').trim();
+  const priority   = String(data.priority   || '').trim();
+
+  sheet.appendRow([nextId, assignedTo, assignedBy, new Date(), task, priority, dueDate, 'Not Started']);
+
+  const dueDateDisplay = dueDate instanceof Date
+    ? Utilities.formatDate(dueDate, Session.getScriptTimeZone(), "dd/MM/yyyy")
+    : '';
+  notifyTaskCreated_(task, dueDateDisplay, assignedTo, assignedBy, priority, nextId);
+
+  return nextId;
+}
+
+function updateActionStatus(rowIndex, status) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName("Action List");
+    if (!sheet) throw new Error("Action List tab missing");
+    sheet.getRange(rowIndex, 8).setValue(status); // Col H = Status
+
+    // Read row details for the Discord notification
+    const row = sheet.getRange(rowIndex, 1, 1, 8).getValues()[0];
+    const taskId    = Number(row[0]) || rowIndex;
+    const assignedTo = String(row[1] || '').trim();
+    const assignedBy = String(row[2] || '').trim();
+    const task       = String(row[4] || '').trim();
+    notifyTaskCompleted_(task, assignedTo, assignedBy, status, taskId);
+
+    return "Success";
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// --- PRESENCE (Active Users) ---
+const _PRESENCE_USERS = ["Ben","Adam","Ian","Rufus","Theo","David","Eli","Tom","Allan","Peter"];
+
+function heartbeatPresence(userName) {
+  if (!userName) return;
+  CacheService.getScriptCache().put("whub_p_" + String(userName).trim(), "1", 90);
+}
+
+function removePresence(userName) {
+  if (!userName) return;
+  CacheService.getScriptCache().remove("whub_p_" + String(userName).trim());
+}
+
+function getActiveUsers() {
+  const keys = _PRESENCE_USERS.map(n => "whub_p_" + n);
+  const vals = CacheService.getScriptCache().getAll(keys);
+  return _PRESENCE_USERS.filter(n => vals["whub_p_" + n] != null);
+}
+
 // HELPER: Centralized Stock Logging
-function logStockTransaction(material, change, reason, sourceOverride) {
+function logStockTransaction(material, change, reason, sourceOverride, callerUser) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const historySheet = ss.getSheetByName("Stock History");
   if (!historySheet) return;
@@ -2719,7 +3917,7 @@ function logStockTransaction(material, change, reason, sourceOverride) {
     }
   }
 
-  const user = Session.getActiveUser().getEmail() || "Workshop App";
+  const user = (callerUser && String(callerUser).trim()) ? String(callerUser).trim() : (Session.getActiveUser().getEmail() || "Workshop App");
   const timestamp = new Date();
 
   // Source: explicit override wins, otherwise infer from material prefix
@@ -3067,10 +4265,12 @@ function syncProductCompletions_(data, targets) {
   if (!Array.isArray(data) || data.length < 2) return;
   if (!Array.isArray(targets) || targets.length === 0) return;
 
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
   const norm = (v) => String(v ?? "").replace(/\u00A0/g, " ").trim().toLowerCase();
   const orderProductMap = {};
   const panelTotalsByCustomerSku = {};
 
+  // Build panel totals from Manufacture Hub
   for (let i = 1; i < data.length; i++) {
     const row = data[i];
     const orderId = norm(row[0]);
@@ -3099,24 +4299,75 @@ function syncProductCompletions_(data, targets) {
     }
   }
 
+  // Build component totals from Components Hub
+  // Cols: A=orderId, B=customer, C=productName, D=compName, E=itemCode, F=qtyPerUnit, G=totalQty, H=qtyPacked
+  const compTotalsByCustomerSku = {};
+  const compSheet = ss.getSheetByName("Components Hub");
+  if (compSheet && compSheet.getLastRow() > 1) {
+    const compData = compSheet.getDataRange().getValues();
+    for (let i = 1; i < compData.length; i++) {
+      const row = compData[i];
+      const orderId = norm(row[0]);
+      const customer = norm(row[1]);
+      const productName = norm(row[2]);
+      const compName = String(row[3] || "");
+      const qtyPerUnit = Number(row[5]) || 1;
+      const qtyPacked = Number(row[7]) || 0;
+
+      // Resolve SKU from the order+product map built above
+      const meta = orderProductMap[`${orderId}||${productName}`];
+      const sku = meta ? meta.sku : "";
+      if (!customer || !sku || !compName) continue;
+
+      const key = `${customer}||${sku}`;
+      if (!compTotalsByCustomerSku[key]) compTotalsByCustomerSku[key] = {};
+      if (!compTotalsByCustomerSku[key][compName]) {
+        compTotalsByCustomerSku[key][compName] = { packed: 0, required: qtyPerUnit };
+      }
+      compTotalsByCustomerSku[key][compName].packed += qtyPacked;
+    }
+  }
+
   targets.forEach(({ orderId, productName }) => {
     const key = `${norm(orderId)}||${norm(productName)}`;
     const meta = orderProductMap[key];
     if (!meta || meta.customer !== "workshop stock" || !meta.sku) return;
 
-    const panelTotals = panelTotalsByCustomerSku[`${meta.customer}||${meta.sku}`];
-    if (!panelTotals) return;
+    const customerSkuKey = `${meta.customer}||${meta.sku}`;
 
-    let totalFinished = Infinity;
+    // Panel limiting factor
+    const panelTotals = panelTotalsByCustomerSku[customerSkuKey];
+    let panelFinished = Infinity;
     let hasPanels = false;
-    Object.keys(panelTotals).forEach((panelKey) => {
-      hasPanels = true;
-      const p = panelTotals[panelKey];
-      const sets = Math.floor((Number(p.packed) || 0) / (Number(p.required) || 1));
-      if (sets < totalFinished) totalFinished = sets;
-    });
+    if (panelTotals) {
+      Object.keys(panelTotals).forEach(panelKey => {
+        hasPanels = true;
+        const p = panelTotals[panelKey];
+        const sets = Math.floor((Number(p.packed) || 0) / (Number(p.required) || 1));
+        if (sets < panelFinished) panelFinished = sets;
+      });
+    }
+    if (!hasPanels || panelFinished === Infinity) panelFinished = 0;
 
-    if (!hasPanels || totalFinished === Infinity) totalFinished = 0;
+    // Component limiting factor
+    const compTotals = compTotalsByCustomerSku[customerSkuKey];
+    let compFinished = Infinity;
+    let hasComps = false;
+    if (compTotals) {
+      Object.keys(compTotals).forEach(compKey => {
+        hasComps = true;
+        const c = compTotals[compKey];
+        const sets = Math.floor((Number(c.packed) || 0) / (Number(c.required) || 1));
+        if (sets < compFinished) compFinished = sets;
+      });
+    }
+    if (!hasComps) compFinished = Infinity; // no components → not a limiting factor
+
+    // Overall: limited by whichever is lower (components only limit if they exist)
+    const totalFinished = hasPanels
+      ? Math.min(panelFinished, compFinished === Infinity ? panelFinished : compFinished)
+      : 0;
+
     syncToFinishedGoods(meta.customer, meta.sku, meta.productName, totalFinished);
   });
 }
