@@ -1562,6 +1562,9 @@ function renderEdgeStockManager() {
                       title="Adjust">
                 <strong>±</strong>
               </button>
+              <button class="btn btn-outline-primary btn-sm px-2"
+                      onclick="openEditEdgeModal(${item.rowIndex})"
+                      title="Edit edge details">Edit</button>
 
               <button class="btn btn-outline-secondary btn-sm px-2"
                       onclick="openStockHistory('edge', ${item.rowIndex})"
@@ -1645,6 +1648,9 @@ function renderWoodStockManager() {
             title="Adjust">
       <strong>±</strong>
     </button>
+    <button class="btn btn-outline-primary btn-sm px-2"
+            onclick="openEditWoodModal(${item.rowIndex})"
+            title="Edit wood details">Edit</button>
 
     <button class="btn btn-outline-secondary btn-sm px-2"
             onclick="openStockHistory('wood', ${item.rowIndex})"
@@ -3699,6 +3705,11 @@ function renderComponentStockTable() {
                     title="Adjust Stock (Add/Remove)">
               <strong>±</strong>
             </button>
+            <button class="btn btn-outline-primary btn-sm px-2"
+                    onclick="openEditComponentModal(${item.rowIndex})"
+                    title="Edit component details">
+              Edit
+            </button>
             <button class="btn btn-outline-secondary btn-sm px-2"
                     onclick="openStockHistory('comp', ${item.rowIndex})"
                     title="View Change Log">
@@ -3860,6 +3871,134 @@ function openAddItemModal(type) {
 
   document.getElementById('addItemFields').innerHTML = fields;
   new bootstrap.Modal(document.getElementById('addItemModal')).show();
+}
+
+function openEditComponentModal(rowIndex) {
+  const item = (stockData.components || []).find(x => x.rowIndex === rowIndex);
+  if (!item) { alert("Component item not found."); return; }
+
+  document.getElementById('edit-comp-row-index').value = String(item.rowIndex);
+  document.getElementById('edit-comp-itemcode').value = item.itemCode || '';
+  document.getElementById('edit-comp-name').value = item.name || '';
+  document.getElementById('edit-comp-category').value = item.category || '';
+  document.getElementById('edit-comp-supplier').value = item.supplier || '';
+  document.getElementById('edit-comp-stock').value = Number(item.stock) || 0;
+  document.getElementById('edit-comp-onorder').value = Number(item.onOrder) || 0;
+  document.getElementById('edit-comp-price').value = Number(item.price) || 0;
+  document.getElementById('edit-comp-link').value = item.link || '';
+
+  new bootstrap.Modal(document.getElementById('editComponentModal')).show();
+}
+
+function saveEditedComponent() {
+  const payload = {
+    rowIndex: Number(document.getElementById('edit-comp-row-index').value),
+    itemCode: document.getElementById('edit-comp-itemcode').value,
+    name: document.getElementById('edit-comp-name').value,
+    category: document.getElementById('edit-comp-category').value,
+    supplier: document.getElementById('edit-comp-supplier').value,
+    stock: Number(document.getElementById('edit-comp-stock').value),
+    onOrder: Number(document.getElementById('edit-comp-onorder').value),
+    price: Number(document.getElementById('edit-comp-price').value),
+    link: document.getElementById('edit-comp-link').value
+  };
+
+  if (!payload.name.trim()) { alert("Component name is required."); return; }
+  if (![payload.stock, payload.onOrder, payload.price].every(v => Number.isFinite(v) && v >= 0)) {
+    alert("Stock, On Order and Price must be zero or positive numbers.");
+    return;
+  }
+
+  showStatus("Saving component...", false);
+  google.script.run
+    .withSuccessHandler(() => {
+      const modal = bootstrap.Modal.getInstance(document.getElementById('editComponentModal'));
+      if (modal) modal.hide();
+      google.script.run.withSuccessHandler(d => {
+        stockData = d;
+        openComponentStock(false);
+        showStatus("Saved", true);
+      }).getInventoryData();
+    })
+    .withFailureHandler(err => {
+      alert(err && err.message ? err.message : err);
+      showStatus("Error", false);
+    })
+    .updateComponentItem(payload, currentUser);
+}
+
+function openEditWoodModal(rowIndex) {
+  const item = (stockData.wood || []).find(x => x.rowIndex === rowIndex && String(x.type || '').toLowerCase() !== 'offcut');
+  if (!item) { alert("Wood stock item not found."); return; }
+  document.getElementById('edit-wood-row-index').value = String(item.rowIndex);
+  document.getElementById('edit-wood-material').value = item.material || '';
+  document.getElementById('edit-wood-colourcode').value = item.colourCode || '';
+  document.getElementById('edit-wood-length').value = Number(item.length) || 0;
+  document.getElementById('edit-wood-width').value = Number(item.width) || 0;
+  document.getElementById('edit-wood-onorder').value = Number(item.onOrder) || 0;
+  document.getElementById('edit-wood-qty').value = Number(item.qty) || 0;
+  document.getElementById('edit-wood-price').value = Number(item.price) || 0;
+  new bootstrap.Modal(document.getElementById('editWoodModal')).show();
+}
+
+function saveEditedWood() {
+  const payload = {
+    rowIndex: Number(document.getElementById('edit-wood-row-index').value),
+    material: document.getElementById('edit-wood-material').value,
+    colourCode: document.getElementById('edit-wood-colourcode').value,
+    length: Number(document.getElementById('edit-wood-length').value),
+    width: Number(document.getElementById('edit-wood-width').value),
+    onOrder: Number(document.getElementById('edit-wood-onorder').value),
+    qty: Number(document.getElementById('edit-wood-qty').value),
+    price: Number(document.getElementById('edit-wood-price').value)
+  };
+  if (!payload.material.trim() || !payload.colourCode.trim()) { alert("Material and colour code are required."); return; }
+  if (![payload.length, payload.width].every(v => Number.isFinite(v) && v > 0)) { alert("Length and width must be greater than 0."); return; }
+  if (![payload.onOrder, payload.qty, payload.price].every(v => Number.isFinite(v) && v >= 0)) { alert("On order, qty and price must be zero or positive."); return; }
+
+  showStatus("Saving wood...", false);
+  google.script.run.withSuccessHandler(() => {
+    const modal = bootstrap.Modal.getInstance(document.getElementById('editWoodModal'));
+    if (modal) modal.hide();
+    google.script.run.withSuccessHandler(d => { stockData = d; openWoodStock(false); showStatus("Saved", true); }).getInventoryData();
+  }).withFailureHandler(err => { alert(err && err.message ? err.message : err); showStatus("Error", false); })
+    .updateWoodItem(payload, currentUser);
+}
+
+function openEditEdgeModal(rowIndex) {
+  const item = (stockData.edge || []).find(x => x.rowIndex === rowIndex);
+  if (!item) { alert("Edge stock item not found."); return; }
+  document.getElementById('edit-edge-row-index').value = String(item.rowIndex);
+  document.getElementById('edit-edge-material').value = item.material || '';
+  document.getElementById('edit-edge-thickness').value = Number(item.thickness) || 0;
+  document.getElementById('edit-edge-rolllength').value = Number(item.rollLength) || 0;
+  document.getElementById('edit-edge-onorder').value = Number(item.onOrder) || 0;
+  document.getElementById('edit-edge-rolls').value = Number(item.rolls) || 0;
+  document.getElementById('edit-edge-price').value = Number(item.price) || 0;
+  new bootstrap.Modal(document.getElementById('editEdgeModal')).show();
+}
+
+function saveEditedEdge() {
+  const payload = {
+    rowIndex: Number(document.getElementById('edit-edge-row-index').value),
+    material: document.getElementById('edit-edge-material').value,
+    thickness: Number(document.getElementById('edit-edge-thickness').value),
+    rollLength: Number(document.getElementById('edit-edge-rolllength').value),
+    onOrder: Number(document.getElementById('edit-edge-onorder').value),
+    rolls: Number(document.getElementById('edit-edge-rolls').value),
+    price: Number(document.getElementById('edit-edge-price').value)
+  };
+  if (!payload.material.trim()) { alert("Material is required."); return; }
+  if (![payload.thickness, payload.rollLength].every(v => Number.isFinite(v) && v > 0)) { alert("Thickness and roll length must be greater than 0."); return; }
+  if (![payload.onOrder, payload.rolls, payload.price].every(v => Number.isFinite(v) && v >= 0)) { alert("On order, rolls and price must be zero or positive."); return; }
+
+  showStatus("Saving edge...", false);
+  google.script.run.withSuccessHandler(() => {
+    const modal = bootstrap.Modal.getInstance(document.getElementById('editEdgeModal'));
+    if (modal) modal.hide();
+    google.script.run.withSuccessHandler(d => { stockData = d; openEdgeStock(false); showStatus("Saved", true); }).getInventoryData();
+  }).withFailureHandler(err => { alert(err && err.message ? err.message : err); showStatus("Error", false); })
+    .updateEdgeBandItem(payload, currentUser);
 }
 
 // Toggle helpers for Add Item form
