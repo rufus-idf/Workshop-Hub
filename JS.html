@@ -3699,6 +3699,11 @@ function renderComponentStockTable() {
                     title="Adjust Stock (Add/Remove)">
               <strong>±</strong>
             </button>
+            <button class="btn btn-outline-primary btn-sm px-2"
+                    onclick="openEditComponentModal(${item.rowIndex})"
+                    title="Edit component details">
+              Edit
+            </button>
             <button class="btn btn-outline-secondary btn-sm px-2"
                     onclick="openStockHistory('comp', ${item.rowIndex})"
                     title="View Change Log">
@@ -3860,6 +3865,60 @@ function openAddItemModal(type) {
 
   document.getElementById('addItemFields').innerHTML = fields;
   new bootstrap.Modal(document.getElementById('addItemModal')).show();
+}
+
+function openEditComponentModal(rowIndex) {
+  const item = (stockData.components || []).find(x => x.rowIndex === rowIndex);
+  if (!item) { alert("Component item not found."); return; }
+
+  document.getElementById('edit-comp-row-index').value = String(item.rowIndex);
+  document.getElementById('edit-comp-itemcode').value = item.itemCode || '';
+  document.getElementById('edit-comp-name').value = item.name || '';
+  document.getElementById('edit-comp-category').value = item.category || '';
+  document.getElementById('edit-comp-supplier').value = item.supplier || '';
+  document.getElementById('edit-comp-stock').value = Number(item.stock) || 0;
+  document.getElementById('edit-comp-onorder').value = Number(item.onOrder) || 0;
+  document.getElementById('edit-comp-price').value = Number(item.price) || 0;
+  document.getElementById('edit-comp-link').value = item.link || '';
+
+  new bootstrap.Modal(document.getElementById('editComponentModal')).show();
+}
+
+function saveEditedComponent() {
+  const payload = {
+    rowIndex: Number(document.getElementById('edit-comp-row-index').value),
+    itemCode: document.getElementById('edit-comp-itemcode').value,
+    name: document.getElementById('edit-comp-name').value,
+    category: document.getElementById('edit-comp-category').value,
+    supplier: document.getElementById('edit-comp-supplier').value,
+    stock: Number(document.getElementById('edit-comp-stock').value),
+    onOrder: Number(document.getElementById('edit-comp-onorder').value),
+    price: Number(document.getElementById('edit-comp-price').value),
+    link: document.getElementById('edit-comp-link').value
+  };
+
+  if (!payload.name.trim()) { alert("Component name is required."); return; }
+  if (![payload.stock, payload.onOrder, payload.price].every(v => Number.isFinite(v) && v >= 0)) {
+    alert("Stock, On Order and Price must be zero or positive numbers.");
+    return;
+  }
+
+  showStatus("Saving component...", false);
+  google.script.run
+    .withSuccessHandler(() => {
+      const modal = bootstrap.Modal.getInstance(document.getElementById('editComponentModal'));
+      if (modal) modal.hide();
+      google.script.run.withSuccessHandler(d => {
+        stockData = d;
+        openComponentStock(false);
+        showStatus("Saved", true);
+      }).getInventoryData();
+    })
+    .withFailureHandler(err => {
+      alert(err && err.message ? err.message : err);
+      showStatus("Error", false);
+    })
+    .updateComponentItem(payload, currentUser);
 }
 
 // Toggle helpers for Add Item form
